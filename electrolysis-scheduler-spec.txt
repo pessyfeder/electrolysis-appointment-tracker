@@ -1,0 +1,353 @@
+ELECTROLYSIS APPOINTMENT SCHEDULER - SPEC DOC
+
+Prepared for: Pessy Friedman
+Date: August 19, 2026
+Status: Draft v3.0 - open questions resolved, ready for build
+
+================================================================
+
+1. OVERVIEW
+
+A desktop application for a solo electrolysis practitioner (Mom) to
+manage appointment scheduling, client contact/payment records, and
+business-hour enforcement - running entirely locally on one computer,
+with no cloud backup and no email/SMS integration.
+
+This document is written to be used by Pessy to build the application.
+It defines scope, data model, features, and technical decisions in
+enough detail that implementation can begin without further design
+work.
+
+================================================================
+
+2. GOALS & NON-GOALS
+
+Goals:
+- Replace paper/spreadsheet scheduling with a single desktop app for one
+  practitioner.
+- Make it fast to book, reschedule, and cancel appointments from a
+  calendar view, eliminating issues such as double-booking.
+- Keep a simple client database: name, phone, and payment history.
+- Track payments per appointment/client so Mom can see what's owed or
+  been paid (including credits/debts carried across visits).
+- Enforce business hours and appointment length limits, and prevent
+  appointments from leaving an unbookable gap in the schedule. There's
+  no separate "buffer time" concept to build - since the minimum
+  appointment length is 15 minutes, any gap of 1-14 minutes between
+  appointments is simply dead time nothing could ever fill, so the app
+  just needs to disallow gaps in that 1-14 minute range (appointments
+  can be back-to-back with a 0-minute gap, or spaced 15+ minutes apart).
+- Let Mom (Admin) block off time slots or full days when unavailable.
+
+Non-Goals (out of scope for v1):
+- Multi-practitioner or multi-location support.
+- Online client self-booking (client-facing web portal).
+- Full clinical/EMR-grade treatment charting (body maps, photos) - can
+  be a future phase.
+- Mobile app version.
+- Insurance billing/claims.
+- Email or SMS reminders/notifications of any kind.
+- Cloud backup or cloud sync of any kind - data lives only on the local
+  machine.
+
+================================================================
+
+3. TARGET USER
+
+One person: a solo electrolysis practitioner (Mom) who both performs
+treatments and manages her own front-desk work (scheduling, billing).
+She needs the app to be simple, reliable, and low-maintenance - not an
+enterprise practice-management system.
+
+================================================================
+
+4. TECH STACK
+
+Language: Python 3.11+
+
+GUI framework: PySide6 (Qt for Python)
+  Recommended over Tkinter/Kivy - better-looking widgets out of the box
+  (calendar view, tables, forms), actively maintained, free (LGPL), good
+  for a "real" business app. Tkinter is a fallback if a lighter
+  dependency footprint is preferred; Kivy is not recommended
+  (touch/mobile-oriented, not ideal for dense forms/tables).
+
+Local database: SQLite (via sqlite3 or SQLAlchemy)
+  Single-file DB, zero server setup, perfect for single-user local
+  storage.
+
+Packaging: PyInstaller
+  Builds a standalone .exe/.app so Mom doesn't need Python installed.
+
+Not used in this build: email sending, SMS sending, cloud backup/sync.
+The app has no internet dependency - it is a fully offline, local-only
+tool.
+
+================================================================
+
+5. ARCHITECTURE OVERVIEW
+
+Single-process desktop app, fully local, no network calls:
+
+  PySide6 GUI
+  (Calendar | Clients | Billing)
+        |
+  App Core Logic (Python services)
+  (booking rules, business-hour/gap validation, price calculation,
+   balance tracking, password gate)
+        |
+  SQLite (local DB only - no backup job, no external sync)
+
+Note: the database is local-only. There is no server, no login over a
+network, and no outbound network traffic of any kind - everything the
+app does happens on the one machine it's installed on.
+
+================================================================
+
+6. DATA MODEL
+
+SQLite schema (v3):
+
+--- Table: clients ---
+  id            INTEGER PK
+  first_name    TEXT      required
+  last_name     TEXT      required
+  phone         TEXT      required
+  notes         TEXT      optional free-text (area(s) to be treated,
+                           preferences, etc.)
+  created_at    DATETIME
+  archived      BOOLEAN   soft-delete flag instead of hard delete
+
+--- Table: appointments ---
+  id                INTEGER PK
+  client_id         INTEGER   FK -> clients.id
+  start_datetime    DATETIME  required
+  end_datetime      DATETIME  required (start + duration)
+  status            TEXT      scheduled / in_process / completed /
+                               cancelled / no_show
+  notes             TEXT      optional (e.g. treatment area for this
+                               visit)
+  price             DECIMAL   auto-calculated, not manually entered -
+                               see 7.3 for formula
+  created_at        DATETIME
+
+--- Table: payments ---
+  id                INTEGER PK
+  client_id         INTEGER   FK -> clients.id
+  appointment_id    INTEGER   FK -> appointments.id, nullable (payments
+                               aren't always tied 1:1 to an appointment -
+                               clients can pay in bulk ahead of time or
+                               pay later, building up a credit or a debt)
+  amount            DECIMAL   required
+  method            TEXT      cash / card / check / other
+  paid_at           DATETIME
+  notes             TEXT      optional
+
+--- Table: blocked_times ---
+  id                INTEGER PK
+  start_datetime    DATETIME  required
+  end_datetime      DATETIME  required (can span a full day)
+  reason            TEXT      required free-text note on why Mom is
+                               unavailable
+  created_at        DATETIME
+
+--- Table: business_hours ---
+  id                INTEGER PK
+  day_of_week       TEXT      Sun / Mon / Tue / Wed / Thu / Fri / Sat
+  start_time        TIME
+  end_time          TIME
+  Note: a given day can have more than one row if there are separate
+  morning and evening blocks; a day with no rows is closed (see 7.1 for
+  the actual hours).
+
+--- Table: settings ---
+  key       TEXT PK   e.g. admin_password_hash
+  value     TEXT
+
+================================================================
+
+7. FUNCTIONAL REQUIREMENTS
+
+7.1 Calendar & Appointment Booking
+- Main screen shows a calendar in day/week/month views (default: week
+  view).
+- Click a time slot to create a new appointment; select an existing
+  client or quick-add a new one inline.
+- Appointment form fields: client, date/time, duration (or end time),
+  treatment notes, status. Price is calculated automatically (7.3), not
+  typed in.
+- Drag-and-drop or edit-in-place to reschedule.
+- Cancel/no-show marking without deleting the record (status change,
+  kept for history).
+- Conflict warning if a new appointment overlaps an existing one, a
+  blocked time, or falls outside business hours.
+- Daily/weekly view should clearly show gaps for finding open slots.
+- Booked slots should appear grayed - out. 
+- App should auto-suggest availableslots that are between two booked
+ slots / next available slot by flashing it.
+
+
+  Business hours (default, stored in the business_hours table so they
+  can be adjusted without a code change):
+    Sun: 11:30 - 1:30, 7:30 pm - 10:30 pm
+    Tue: 7:30 pm - 10:30 pm
+    Mon, Wed, Thu: 10:30 am - 1:30 pm and 7:30 pm - 10:30 pm
+    Fri, Sat: closed (no appointments)
+
+  Scheduling rules (enforced by the app, not just suggested):
+    - Appointment length must be at least 15 minutes, and at most the
+      time remaining between the requested start time and the end of
+      that business-hours block (e.g. an appointment starting at
+      9:00 pm in the evening block can be at most 30 minutes).
+    - No separate "buffer" is needed between appointments - back-to-back
+      appointments (0-minute gap) are fine. What's not allowed is a gap
+      of 1-14 minutes between the end of one appointment and the start
+      of the next, since that space is too short for the 15-minute
+      minimum appointment length to ever fill it. A gap is only valid
+      if it's 0 minutes (back-to-back) or 15+ minutes.
+    - Appointments cannot be booked inside a blocked time slot/day.
+
+  Blocking time off:
+    - Admin (Mom) can click on the calendar to block off a specific
+      time slot or an entire day.
+    - A blocked slot/day requires a short note explaining the reason
+      for unavailability - this is a required field, not optional, so
+      there's always a record of why a slot was blocked.
+    - Blocked time behaves like a hard conflict - no appointment can be
+      booked over it until it's removed.
+
+7.2 Client Database
+- Client list, searchable/filterable by name or phone.
+- Client detail view: contact info (name, phone), full appointment
+  history, full payment history, running balance (charged minus paid -
+  positive means the client owes money, negative means the client has a
+  credit toward future visits).
+- Add/edit/archive clients (archive instead of hard delete, to preserve
+  appointment/payment history integrity).
+
+7.3 Billing & Payments
+- No formal "packages" - billing is purely time-based.
+- Appointment price is auto-calculated and displayed upon appointment completion (NOT when appointment is booked), using: price = appointment_length_minutes x 2.5  (i.e. $2.50 per minute). This rate is uniform across every treatment area/type - there is no per-area pricing.
+- Record a payment against a client (optionally tied to a specific
+  appointment). Clients may pay in bulk ahead of time (building a
+  credit that future appointment charges draw down) or pay later
+  (building a debt/balance owed) - both are just reflected in the
+  running balance, not tracked as a formal "package."
+- Track running balance per client (total charged vs. total paid).
+- Simple report/export: payments received in a date range (for
+  tax/bookkeeping purposes) - CSV export at minimum.
+- Click start / end session - times the session, calculates time * rate,
+displays amount owed @ end of session based on actual time worked, 
+not based on time scheduled.
+	- Appointment status should be "In Progress" once "start" button is clicked, 
+remaining so until "end" button is clicked, at which point status is "completed" 
+and price is calculated and shown.
+
+7.4 Admin Access
+- The app requires the Admin password (Mom's password) to open/launch
+  at all - it cannot be used without entering it first.
+- Once the app is open, no further password is needed for routine use:
+  creating, rescheduling, or cancelling appointments; entering client
+  info; and recording payments.
+- Editing time availability - i.e. changing business hours, or blocking
+  or unblocking a time slot/day - requires re-entering the Admin
+  password as an extra confirmation step, separate from the one used to
+  open the app.
+- Store only a hash of the password locally (e.g. via bcrypt or a
+  similar library) - never store or log the plaintext password.
+
+7.5 Data Storage
+- All data lives in a single local SQLite file on the practitioner's
+  computer. There is no cloud backup, no cloud sync, and no automatic
+  export - this was explicitly descoped for v1.
+- Because there's no backup, it's worth calling out as a risk: if the
+  computer's disk fails or the file is deleted, the data is gone. If
+  that risk becomes a concern later, manual backup (e.g. periodically
+  copying the database file to a USB drive) is a lightweight option
+  that doesn't require any of the cloud infrastructure this version
+  intentionally skips.
+
+================================================================
+
+8. UI/UX REQUIREMENTS
+
+Screens:
+1. Calendar/Dashboard (default view on launch) - day/week/month
+   appointment calendar, "add appointment" button, quick view of
+   today's schedule, and the ability to block off time directly on the
+   calendar.
+2. Clients - searchable list + detail panel (contact info, history,
+   balance).
+	- Client panel should pop up during booking process; not be displayed 
+seperately.
+3. Appointment form (modal or side panel) - create/edit an appointment,
+   (shows the auto-calculated price.)
+	- price pops up upon appointment completion.
+4. Billing - record payments, view balances, export reports.
+
+General UX notes:
+- Should feel like a lightweight, single-purpose business tool - fast
+  to open, fast to add an appointment, minimal clicks for the most
+  common action (booking a new appointment for an existing client).
+- The Admin password is prompted once at launch to open the app at all
+  (see 7.4). A second password prompt appears only when editing time
+  availability (business hours or blocked time) - routine booking,
+  client entry, and payment recording don't require re-entering it.
+- Clear visual distinction between appointment statuses (scheduled /
+  in process / completed / cancelled / no-show) via color coding.
+- Blocked time should be visually distinct from booked appointments on
+  the calendar (e.g. a hatched/greyed-out block).
+
+================================================================
+
+9. NON-FUNCTIONAL REQUIREMENTS
+
+- Reliability: the app must not lose data on crash - write to SQLite
+  with transactions; auto-save rather than requiring an explicit "save"
+  step.
+- Performance: should feel instant for a single-user dataset (expected
+  to be at most a few thousand clients/appointments) - no meaningful
+  performance engineering required at this scale.
+- Privacy/security: client contact and payment info is sensitive. At
+  minimum: store the DB file in the user's local app-data directory
+  (not a shared folder), avoid printing sensitive data to logs, and
+  store the Admin password only as a hash (7.4), never in plaintext.
+  The password is required just to open the app, so a lost/forgotten
+  password effectively locks Mom out - worth planning a simple recovery
+  path (e.g. a documented reset procedure) during development.
+- Portability: package as a standalone executable (PyInstaller) so it
+  runs without a separate Python install.
+- Connectivity: the app is fully offline by design - no feature depends
+  on an internet connection.
+
+================================================================
+
+10. BUILD PHASES
+
+Phase 1 - MVP
+- Admin password gate to open the app
+- Calendar view + appointment CRUD
+- Business-hours, appointment-length, and unbookable-gap validation
+- Client database (name, phone, notes)
+- Auto-calculated appointment pricing ($2.50/minute)
+- Local SQLite storage
+
+Phase 2 - Billing & Admin Controls
+- Payment tracking + running client balance (credits/debts)
+- CSV export of payments
+- Second password gate specifically for editing time availability
+  (business hours changes, blocking/unblocking time)
+- Block off time slots/full days with a required reason note
+
+Phase 3 - Polish & Optional Enhancements
+- In-app editing of business hours (instead of only via direct DB/config
+  edits)
+- Refined status color coding and calendar visuals
+- Manual local backup helper (e.g. a "copy database file to..." button),
+  if the no-backup risk noted in 7.5 becomes a concern later
+
+================================================================
+
+This spec is intended as a living document - update it as new decisions
+come up during development so it stays the source of truth for what the
+app should do.
