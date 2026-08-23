@@ -1,13 +1,18 @@
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit, QPushButton,
-    QHBoxLayout, QMessageBox
+    QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
+    QHBoxLayout, QMessageBox, QLabel
 )
 
 from app import models
+from app.util import format_phone, is_valid_phone
 
 
 class ClientDialog(QDialog):
-    """Add or edit a client. Pops up during booking for quick-add (spec 8.2)."""
+    """Add or edit a client's basic info. Pops up during booking (quick-add
+    for a new client, or a light edit of an existing one). Only last name and
+    phone are required - first name is optional. Balance, full appointment/
+    payment history, and archive live in the admin-gated client detail view
+    under the Billing tab."""
 
     def __init__(self, parent=None, client_row=None):
         super().__init__(parent)
@@ -20,14 +25,17 @@ class ClientDialog(QDialog):
         form = QFormLayout()
         self.first_name = QLineEdit(client_row["first_name"] if client_row else "")
         self.last_name = QLineEdit(client_row["last_name"] if client_row else "")
-        self.phone = QLineEdit(client_row["phone"] if client_row else "")
-        self.notes = QTextEdit(client_row["notes"] if client_row and client_row["notes"] else "")
-        self.notes.setFixedHeight(80)
-        form.addRow("First name:", self.first_name)
-        form.addRow("Last name:", self.last_name)
-        form.addRow("Phone:", self.phone)
-        form.addRow("Notes:", self.notes)
+        self.phone = QLineEdit(format_phone(client_row["phone"]) if client_row else "")
+        self.phone.setPlaceholderText("(555) 123-4567")
+        self.phone.editingFinished.connect(self._format_phone_field)
+        form.addRow("Last name: *", self.last_name)
+        form.addRow("First name (optional):", self.first_name)
+        form.addRow("Phone: *", self.phone)
         layout.addLayout(form)
+
+        required_hint = QLabel("* Required")
+        required_hint.setStyleSheet("color: #64748b; font-size: 11px;")
+        layout.addWidget(required_hint)
 
         btn_row = QHBoxLayout()
         cancel_btn = QPushButton("Cancel")
@@ -40,16 +48,24 @@ class ClientDialog(QDialog):
         btn_row.addWidget(save_btn)
         layout.addLayout(btn_row)
 
+    def _format_phone_field(self):
+        formatted = format_phone(self.phone.text())
+        if formatted:
+            self.phone.setText(formatted)
+
     def _save(self):
         first = self.first_name.text().strip()
         last = self.last_name.text().strip()
         phone = self.phone.text().strip()
-        if not first or not last or not phone:
-            QMessageBox.warning(self, "Missing Info", "First name, last name, and phone are required.")
+        if not last:
+            QMessageBox.warning(self, "Missing Info", "Last name is required.")
             return
-        notes = self.notes.toPlainText()
+        if not phone or not is_valid_phone(phone):
+            QMessageBox.warning(self, "Invalid Phone", "Enter a valid 10-digit phone number.")
+            return
+        phone = format_phone(phone)
         if self.client_id:
-            models.update_client(self.client_id, first, last, phone, notes)
+            models.update_client(self.client_id, first, last, phone, "")
         else:
-            self.client_id = models.create_client(first, last, phone, notes)
+            self.client_id = models.create_client(first, last, phone, "")
         self.accept()

@@ -1,8 +1,10 @@
 ELECTROLYSIS APPOINTMENT SCHEDULER - SPEC DOC
 
 Prepared for: Pessy Friedman
-Date: August 19, 2026
-Status: Draft v3.0 - open questions resolved, ready for build
+Date: August 20, 2026
+Status: Draft v4.0 - revised after v1 build feedback (multi-client
+appointments, past-date lockout, client-form simplification, dropped
+day view)
 
 ================================================================
 
@@ -38,6 +40,12 @@ Goals:
   just needs to disallow gaps in that 1-14 minute range (appointments
   can be back-to-back with a 0-minute gap, or spaced 15+ minutes apart).
 - Let Mom (Admin) block off time slots or full days when unavailable.
+- Allow more than one client to share a single calendar slot (e.g. a
+  parent and child booked together), while still billing each of them
+  separately based on their own actual time (see 7.1 and 7.3).
+- Keep past dates from being booked by mistake - they're grayed out and
+  not clickable for new appointments, while Admin can still view who was
+  booked on them.
 
 Non-Goals (out of scope for v1):
 - Multi-practitioner or multi-location support.
@@ -110,26 +118,48 @@ SQLite schema (v3):
 
 --- Table: clients ---
   id            INTEGER PK
-  first_name    TEXT      required
+  first_name    TEXT      optional
   last_name     TEXT      required
-  phone         TEXT      required
-  notes         TEXT      optional free-text (area(s) to be treated,
-                           preferences, etc.)
+  phone         TEXT      required - stored/displayed formatted as
+                           (XXX) XXX-XXXX
+  notes         TEXT      optional free-text, not part of the normal
+                           add/edit-client flow (no notes prompt when
+                           saving a client) - left in the schema for any
+                           future use, but the client form no longer
+                           shows a notes field
   created_at    DATETIME
   archived      BOOLEAN   soft-delete flag instead of hard delete
 
 --- Table: appointments ---
+  An appointment is a booked calendar slot (a time block). It no longer
+  belongs to a single client directly - one or more clients can be
+  attached to the same slot via appointment_clients below, so e.g. a
+  parent and child can share one slot on the calendar while still being
+  treated - and billed - one at a time, sequentially (see 7.3).
   id                INTEGER PK
-  client_id         INTEGER   FK -> clients.id
   start_datetime    DATETIME  required
   end_datetime      DATETIME  required (start + duration)
-  status            TEXT      scheduled / in_process / completed /
-                               cancelled / no_show
-  notes             TEXT      optional (e.g. treatment area for this
-                               visit)
-  price             DECIMAL   auto-calculated, not manually entered -
-                               see 7.3 for formula
+  notes             TEXT      optional (appointment-level note, e.g.
+                               treatment area for this visit)
   created_at        DATETIME
+
+--- Table: appointment_clients ---
+  Join table: one row per client attached to an appointment. Each
+  client's own session is tracked independently so a shared slot can be
+  billed one person at a time.
+  id                  INTEGER PK
+  appointment_id      INTEGER   FK -> appointments.id
+  client_id           INTEGER   FK -> clients.id
+  order_index         INTEGER   position in the sequence clients are
+                                 treated (0 = first)
+  status              TEXT      scheduled / in_process / completed /
+                                 cancelled / no_show - this client's own
+                                 status on the shared appointment
+  session_started_at  DATETIME  set when this client's session is
+                                 started
+  price               DECIMAL   auto-calculated for this client only,
+                                 not manually entered - see 7.3 for
+                                 formula
 
 --- Table: payments ---
   id                INTEGER PK
@@ -169,22 +199,63 @@ SQLite schema (v3):
 7. FUNCTIONAL REQUIREMENTS
 
 7.1 Calendar & Appointment Booking
-- Main screen shows a calendar in day/week/month views (default: week
-  view).
-- Click a time slot to create a new appointment; select an existing
-  client or quick-add a new one inline.
-- Appointment form fields: client, date/time, duration (or end time),
-  treatment notes, status. Price is calculated automatically (7.3), not
-  typed in.
-- Drag-and-drop or edit-in-place to reschedule.
-- Cancel/no-show marking without deleting the record (status change,
-  kept for history).
+- Main screen shows a calendar in month or week views (default: month
+  view). There is no separate day view - week is granular enough to
+  manage a day's bookings, so it was dropped to keep the app simpler.
+- Clicking a day on the month grid jumps to the week view for that day.
+  Past days are grayed out and their empty time is not clickable - you
+  can't create a new appointment on a date that's already gone. Existing
+  appointments already booked on a past day remain fully clickable so
+  Admin can view which client(s) were booked and their contact info; only
+  creating new bookings on past dates is blocked.
+- Click an open time slot in the week view to create a new appointment;
+  select an existing client, quick-add a new one inline, or attach more
+  than one client to the same slot (see "Multiple clients per
+  appointment" below).
+- Appointment form fields: one or more clients, date/time, duration (or
+  end time), appointment notes (optional), status (per client - see
+  below). Price is calculated automatically per client (7.3), not typed
+  in.
+    - Clicking the date field pops up the calendar picker; for a new
+      appointment it won't let you pick a date before today.
+    - Clicking into the start-time field auto-fills it with the earliest
+      currently-available start time for the selected date (respecting
+      business hours and the gap rule below); you can still adjust it
+      from there.
+    - Duration is chosen from a list of valid options in 5-minute steps,
+      starting at 15 minutes and going up to (business-hours block end
+      time - appointment start time). The list automatically excludes any
+      duration that would overlap the next appointment or leave an
+      unbookable 1-14 minute gap before it (see the gap rule below), so
+      it's not possible to pick an invalid duration in the first place.
+- Multiple clients per appointment: a single calendar slot can have more
+  than one client attached (e.g. a parent and child booked together).
+  They are still treated - and billed - one at a time: Start Session on
+  one client's row begins timing just that client; End Session bills
+  just that client for their actual time (7.3) and, if another client is
+  still waiting on the same appointment, the app asks whether to start
+  that next client's session right away. Each client on a shared
+  appointment can independently be marked no-show or cancelled without
+  affecting the others.
+- Edit-in-place to reschedule (only while nothing on the appointment has
+  started yet - see below).
+- Cancel/no-show marking without deleting the record (per-client status
+  change, kept for history).
 - Conflict warning if a new appointment overlaps an existing one, a
   blocked time, or falls outside business hours.
-- Daily/weekly view should clearly show gaps for finding open slots.
-- Booked slots should appear grayed - out. 
-- App should auto-suggest availableslots that are between two booked
- slots / next available slot by flashing it.
+- Week view clearly shows gaps for finding open slots, and past days are
+  visually grayed out (see above).
+- Appointments are color-coded by status (scheduled / in progress /
+  completed / cancelled / no-show); a shared appointment with clients in
+  different states shows the most relevant color (in-progress and
+  scheduled take priority over finished/cancelled states).
+- App auto-suggests the next available slot / a gap between two booked
+  slots by flashing it.
+- Once any client on an appointment has actually started their session
+  (or the appointment's start time has passed), its date/time/duration
+  can no longer be changed - only status actions and adding/managing
+  clients remain available, so a billed session's timing can't be
+  retroactively altered.
 
 
   Business hours (default, stored in the business_hours table so they
@@ -224,10 +295,18 @@ SQLite schema (v3):
   credit toward future visits).
 - Add/edit/archive clients (archive instead of hard delete, to preserve
   appointment/payment history integrity).
+- Add/edit-client form only asks for last name (required), first name
+  (optional), and phone (required, validated as a 10-digit number and
+  auto-formatted as (XXX) XXX-XXXX). There is no notes field in this
+  form - saving a client's info never prompts for notes.
 
 7.3 Billing & Payments
 - No formal "packages" - billing is purely time-based.
-- Appointment price is auto-calculated and displayed upon appointment completion (NOT when appointment is booked), using: price = appointment_length_minutes x 2.5  (i.e. $2.50 per minute). This rate is uniform across every treatment area/type - there is no per-area pricing.
+- Appointment price is auto-calculated and displayed upon session
+  completion (NOT when the appointment is booked), using:
+  price = session_length_minutes x 2.5 (i.e. $2.50 per minute). This
+  rate is uniform across every treatment area/type - there is no
+  per-area pricing.
 - Record a payment against a client (optionally tied to a specific
   appointment). Clients may pay in bulk ahead of time (building a
   credit that future appointment charges draw down) or pay later
@@ -236,12 +315,21 @@ SQLite schema (v3):
 - Track running balance per client (total charged vs. total paid).
 - Simple report/export: payments received in a date range (for
   tax/bookkeeping purposes) - CSV export at minimum.
-- Click start / end session - times the session, calculates time * rate,
-displays amount owed @ end of session based on actual time worked, 
-not based on time scheduled.
-	- Appointment status should be "In Progress" once "start" button is clicked, 
-remaining so until "end" button is clicked, at which point status is "completed" 
-and price is calculated and shown.
+- Click Start Session / End Session on a client's row - times that
+  client's session, calculates time x rate, displays amount owed at the
+  end of the session based on actual time worked, not based on time
+  scheduled.
+    - That client's status becomes "In Progress" once Start Session is
+      clicked, remaining so until End Session is clicked, at which point
+      their status becomes "Completed" and their price is calculated and
+      shown.
+    - When an appointment has more than one client attached to the same
+      slot (7.1), each client is billed independently and sequentially:
+      Start/End Session only ever times one client at a time. When one
+      client's session ends, if another client is still waiting on that
+      same appointment, the app asks whether to start that next client's
+      session immediately - their time is tracked separately and they
+      are billed separately based on their own actual session length.
 
 7.4 Admin Access
 - The app requires the Admin password (Mom's password) to open/launch
@@ -272,17 +360,22 @@ and price is calculated and shown.
 8. UI/UX REQUIREMENTS
 
 Screens:
-1. Calendar/Dashboard (default view on launch) - day/week/month
-   appointment calendar, "add appointment" button, quick view of
-   today's schedule, and the ability to block off time directly on the
-   calendar.
+1. Calendar/Dashboard (default view on launch) - month/week
+   appointment calendar (no separate day view - see 7.1), "add
+   appointment" button, quick view of today's schedule, and the ability
+   to block off time directly on the calendar. Past dates are grayed out
+   and not clickable for new bookings, but existing appointments on them
+   stay clickable so Admin can view who was booked.
 2. Clients - searchable list + detail panel (contact info, history,
    balance).
-	- Client panel should pop up during booking process; not be displayed 
+	- Client panel should pop up during booking process; not be displayed
 seperately.
-3. Appointment form (modal or side panel) - create/edit an appointment,
-   (shows the auto-calculated price.)
-	- price pops up upon appointment completion.
+3. Appointment form (modal or side panel) - create/edit an appointment
+   with one or more clients attached (shows each client's
+   auto-calculated price once their session completes). Date field pops
+   up a calendar picker; start-time field auto-suggests the earliest
+   open time; duration is picked from a pre-validated list of options
+   (see 7.1).
 4. Billing - record payments, view balances, export reports.
 
 General UX notes:
@@ -296,7 +389,8 @@ General UX notes:
 - Clear visual distinction between appointment statuses (scheduled /
   in process / completed / cancelled / no-show) via color coding.
 - Blocked time should be visually distinct from booked appointments on
-  the calendar (e.g. a hatched/greyed-out block).
+  the calendar (e.g. a hatched/greyed-out block). Past dates use a
+  separate grayed-out treatment to signal "view only, not bookable."
 
 ================================================================
 
@@ -328,7 +422,7 @@ Phase 1 - MVP
 - Admin password gate to open the app
 - Calendar view + appointment CRUD
 - Business-hours, appointment-length, and unbookable-gap validation
-- Client database (name, phone, notes)
+- Client database (last name required, first name optional, phone)
 - Auto-calculated appointment pricing ($2.50/minute)
 - Local SQLite storage
 
@@ -345,6 +439,19 @@ Phase 3 - Polish & Optional Enhancements
 - Refined status color coding and calendar visuals
 - Manual local backup helper (e.g. a "copy database file to..." button),
   if the no-backup risk noted in 7.5 becomes a concern later
+
+Phase 4 - Multi-Client Appointments & Scheduling UX (this revision)
+- Simplified client form: last name only required, phone auto-formatted,
+  no notes prompt
+- Past dates grayed out and locked from new bookings, while remaining
+  viewable for Admin
+- Dropped the separate day view - month and week only
+- Appointments can have more than one client attached to the same slot,
+  each billed independently and sequentially (Start/End Session per
+  client, with an auto-suggested "start the next client" prompt)
+- Appointment form: click-to-suggest start time, a pre-validated duration
+  list, and a date picker that won't allow picking a past date for a new
+  appointment
 
 ================================================================
 

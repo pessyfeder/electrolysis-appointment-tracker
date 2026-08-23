@@ -2,7 +2,6 @@ from PySide6.QtWidgets import QMainWindow, QTabWidget, QMenuBar
 from PySide6.QtGui import QAction
 
 from ui.calendar_view import CalendarView
-from ui.clients_view import ClientsView
 from ui.billing_view import BillingView
 from ui.login_dialog import prompt_admin_reauth
 
@@ -15,11 +14,9 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.calendar_view = CalendarView(self, require_admin=self.require_admin)
-        self.clients_view = ClientsView(self)
-        self.billing_view = BillingView(self)
+        self.billing_view = BillingView(self, require_admin=self.require_admin)
 
-        self.tabs.addTab(self.calendar_view, "Calendar")
-        self.tabs.addTab(self.clients_view, "Clients")
+        self.tabs.addTab(self.calendar_view, "Appointments")
         self.tabs.addTab(self.billing_view, "Billing")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
@@ -45,7 +42,5 @@ class MainWindow(QMainWindow):
         widget = self.tabs.widget(index)
         if widget is self.calendar_view:
             self.calendar_view.refresh()
-        elif widget is self.clients_view:
-            self.clients_view.refresh_list()
         elif widget is self.billing_view:
             self.billing_view.refresh()

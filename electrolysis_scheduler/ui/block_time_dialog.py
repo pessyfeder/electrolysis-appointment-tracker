@@ -2,11 +2,12 @@ from datetime import datetime, timedelta, time
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QDateEdit, QTimeEdit, QCheckBox,
-    QTextEdit, QPushButton, QHBoxLayout, QMessageBox
+    QTextEdit, QPushButton, QHBoxLayout, QMessageBox, QLabel
 )
 from PySide6.QtCore import QDate, QTime
 
 from app import models
+from app.util import format_client_name
 
 
 class BlockTimeDialog(QDialog):
@@ -24,7 +25,7 @@ class BlockTimeDialog(QDialog):
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDate(QDate(start_dt.year, start_dt.month, start_dt.day))
-        form.addRow("Date:", self.date_edit)
+        form.addRow("Date: *", self.date_edit)
 
         self.full_day_check = QCheckBox("Block the entire day")
         form.addRow("", self.full_day_check)
@@ -36,17 +37,21 @@ class BlockTimeDialog(QDialog):
         self.end_time_edit.setDisplayFormat("h:mm AP")
         end_default = start_dt + timedelta(minutes=30)
         self.end_time_edit.setTime(QTime(end_default.hour, end_default.minute))
-        form.addRow("From:", self.start_time_edit)
-        form.addRow("To:", self.end_time_edit)
+        form.addRow("From: *", self.start_time_edit)
+        form.addRow("To: *", self.end_time_edit)
 
         self.full_day_check.toggled.connect(self._toggle_full_day)
 
         self.reason_edit = QTextEdit()
         self.reason_edit.setFixedHeight(70)
-        self.reason_edit.setPlaceholderText("Required — why are you unavailable?")
-        form.addRow("Reason:", self.reason_edit)
+        self.reason_edit.setPlaceholderText("Why are you unavailable?")
+        form.addRow("Reason: *", self.reason_edit)
 
         layout.addLayout(form)
+
+        required_hint = QLabel("* Required")
+        required_hint.setStyleSheet("color: #64748b; font-size: 11px;")
+        layout.addWidget(required_hint)
 
         btn_row = QHBoxLayout()
         cancel_btn = QPushButton("Cancel")
@@ -87,7 +92,10 @@ class BlockTimeDialog(QDialog):
             if a["status"] in models.ACTIVE_STATUSES
         ]
         if conflicting:
-            names = ", ".join(f'{a["first_name"]} {a["last_name"]}' for a in conflicting)
+            names = ", ".join(
+                format_client_name(c["first_name"], c["last_name"])
+                for a in conflicting for c in a["clients"]
+            )
             if QMessageBox.question(
                 self, "Existing Appointments",
                 f"This overlaps existing appointment(s) with {names}. Block the time anyway? "

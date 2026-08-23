@@ -1,0 +1,15 @@
+Questions for Mom:
+- try to cut down on working hours; maybe just til 10?
+	Are you sure about Sunday morn?
+ 
+- App should specify which entries are mandatory and which are optional
+- When I click "Record Payment", I don't see anything being recorded.
+- Appointment time should be able to be manually entered. 
+	- clicking on Appointment Start Time should pop up window notifying user of permissible start times
+- Optional does not need to say twice
+- Appointment Durations that are and hour or longer should be formatted as "x hour x minutes" instead of just minutes
+- Session Label should change colors based on Appointment Status. Should also display appointment status.
+---
+- cursor should not be able to enter uneditable text field. It looks very confusing.
+- actually, Start times should NOT be able to be manually inputted, but there needs to be a popup with permissible start times, with the earliest / between two appointments suggested.
+The only way a client can schedule is by clicking an available time.

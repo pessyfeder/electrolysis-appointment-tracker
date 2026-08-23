@@ -3,7 +3,7 @@ import calendar as calendar_module
 
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QRectF, Signal
-from PySide6.QtGui import QPainter, QColor, QPen, QFont
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont
 
 from app import models
 
@@ -17,8 +17,15 @@ STATUS_COLORS = {
     "no_show": QColor("#dc2626"),
 }
 
+HEADER_H = 32
+BADGE_SIZE = 24
+
 
 class MonthGridWidget(QWidget):
+    """A real wall-calendar month grid. Every day routes to the week view
+    (see CalendarView) - future days can be booked there, past days are
+    grayed out here and view-only there."""
+
     day_clicked = Signal(object)
 
     def __init__(self, parent=None):
@@ -28,7 +35,9 @@ class MonthGridWidget(QWidget):
         self.cells = []       # list of date objects, len == rows*7
         self.appts_by_day = {}
         self.blocked_days = set()
-        self.setMinimumHeight(480)
+        self._hover_idx = None
+        self.setMinimumHeight(520)
+        self.setMouseTracking(True)
 
     def set_month(self, year, month):
         self.year, self.month = year, month
@@ -63,80 +72,143 @@ class MonthGridWidget(QWidget):
                 self.blocked_days.add(d)
                 d += timedelta(days=1)
 
+        self._hover_idx = None
         self.update()
 
     def _rows(self):
         return max(1, len(self.cells) // 7)
+
+    def _cell_rect(self, idx):
+        rows = self._rows()
+        col_w = self.width() / 7
+        row_h = (self.height() - HEADER_H) / rows
+        row, col = divmod(idx, 7)
+        return QRectF(col * col_w, HEADER_H + row * row_h, col_w, row_h)
+
+    def _is_past(self, d):
+        return d < date.today()
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor("#ffffff"))
 
-        header_h = 24
-        rows = self._rows()
         col_w = self.width() / 7
-        row_h = (self.height() - header_h) / rows
 
-        font_bold = QFont()
-        font_bold.setBold(True)
-        p.setFont(font_bold)
-        p.setPen(QPen(QColor("#555")))
+        header_font = QFont()
+        header_font.setBold(True)
+        header_font.setPointSize(9)
+        p.setFont(header_font)
+        p.setPen(QPen(QColor("#94a3b8")))
         for i, name in enumerate(DAY_NAMES):
-            p.drawText(QRectF(i * col_w, 0, col_w, header_h), Qt.AlignCenter, name)
+            p.drawText(QRectF(i * col_w, 0, col_w, HEADER_H), Qt.AlignCenter, name.upper())
+        p.setPen(QPen(QColor("#e2e8f0")))
+        p.drawLine(0, HEADER_H, int(self.width()), HEADER_H)
 
         today = date.today()
-        normal_font = QFont()
-        p.setFont(normal_font)
+        num_font = QFont()
+        num_font.setPointSize(10)
+        chip_font = QFont()
+        chip_font.setPointSize(8)
 
         for idx, d in enumerate(self.cells):
-            row = idx // 7
-            col = idx % 7
-            x = col * col_w
-            y = header_h + row * row_h
-            rect = QRectF(x, y, col_w, row_h)
-
+            rect = self._cell_rect(idx)
             in_month = d.month == self.month
-            bg = QColor("#ffffff") if in_month else QColor("#fafafa")
-            if d == today:
-                bg = QColor("#dbeafe")
-            p.fillRect(rect, bg)
-            if d in self.blocked_days:
-                p.fillRect(rect.adjusted(2, 2, -2, -2), QColor(209, 213, 219, 120))
+            is_today = d == today
+            is_past = self._is_past(d)
+            is_hover = idx == self._hover_idx and in_month
 
-            p.setPen(QPen(QColor("#e5e5e5")))
+            bg = QColor("#ffffff") if in_month else QColor("#f8fafc")
+            if is_past and in_month:
+                bg = QColor("#f1f5f9")
+            if is_hover:
+                bg = QColor("#eff6ff")
+            p.fillRect(rect, bg)
+
+            if is_past and in_month:
+                p.fillRect(rect.adjusted(2, 2, -2, -2), QColor(203, 213, 225, 70))
+
+            if d in self.blocked_days:
+                p.fillRect(rect.adjusted(2, 2, -2, -2), QColor(226, 232, 240, 140))
+
+            # Brushes set by earlier iterations (today's badge circle, chip
+            # fills) must not leak into this plain stroked border.
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor("#f1f5f9")))
             p.drawRect(rect)
 
-            p.setPen(QPen(QColor("#333") if in_month else QColor("#bbb")))
-            p.drawText(QRectF(x + 4, y + 2, col_w - 8, 16), Qt.AlignLeft, str(d.day))
+            # Day-number badge (filled circle for today)
+            num_rect = QRectF(rect.right() - BADGE_SIZE - 6, rect.top() + 6, BADGE_SIZE, BADGE_SIZE)
+            if is_today:
+                p.setBrush(QBrush(QColor("#2563eb")))
+                p.setPen(Qt.NoPen)
+                p.drawEllipse(num_rect)
+                p.setPen(QPen(QColor("#ffffff")))
+            elif is_past and in_month:
+                p.setPen(QPen(QColor("#94a3b8")))
+            else:
+                p.setPen(QPen(QColor("#1e293b") if in_month else QColor("#cbd5e1")))
+            p.setFont(num_font)
+            p.drawText(num_rect, Qt.AlignCenter, str(d.day))
 
+            # Appointment chips
             day_appts = self.appts_by_day.get(d, [])
-            max_lines = max(1, int((row_h - 20) / 14))
+            p.setFont(chip_font)
+            max_lines = max(1, int((rect.height() - 36) / 17))
             for i, a in enumerate(day_appts[:max_lines]):
                 s = datetime.fromisoformat(a["start_datetime"])
                 color = STATUS_COLORS.get(a["status"], QColor("#999"))
-                line_rect = QRectF(x + 3, y + 20 + i * 14, col_w - 6, 13)
-                p.fillRect(QRectF(line_rect.x(), line_rect.y() + 2, 4, 9), color)
-                p.setPen(QPen(QColor("#333")))
-                label = f"{s.hour % 12 or 12}:{s.minute:02d} {a['first_name']} {a['last_name'][:1]}."
-                p.drawText(line_rect.adjusted(7, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, label)
+                chip_rect = QRectF(rect.left() + 6, rect.top() + 34 + i * 17, rect.width() - 12, 15)
+                p.setBrush(QBrush(color.lighter(160)))
+                p.setPen(Qt.NoPen)
+                p.drawRoundedRect(chip_rect, 4, 4)
+                p.setPen(QPen(color.darker(150)))
+                label = f"{s.hour % 12 or 12}:{s.minute:02d} {a['first_name'] or a['last_name']}"
+                p.drawText(chip_rect.adjusted(5, 0, -3, 0), Qt.AlignLeft | Qt.AlignVCenter, label)
             if len(day_appts) > max_lines:
-                more_rect = QRectF(x + 4, y + row_h - 14, col_w - 8, 12)
-                p.setPen(QPen(QColor("#666")))
-                p.drawText(more_rect, Qt.AlignLeft, f"+{len(day_appts) - max_lines} more")
+                more_rect = QRectF(rect.left() + 6, rect.bottom() - 15, rect.width() - 12, 13)
+                p.setPen(QPen(QColor("#64748b")))
+                p.drawText(more_rect, Qt.AlignLeft | Qt.AlignVCenter, f"+{len(day_appts) - max_lines} more")
+
+            if is_hover:
+                p.setPen(QPen(QColor("#93c5fd"), 1.5))
+                p.setBrush(Qt.NoBrush)
+                p.drawRect(rect.adjusted(1, 1, -1, -1))
 
         p.end()
 
-    def mousePressEvent(self, event):
-        pos = event.position() if hasattr(event, "position") else event.localPos()
-        header_h = 24
+    def _idx_at(self, pos):
+        if pos.y() < HEADER_H:
+            return None
         rows = self._rows()
         col_w = self.width() / 7
-        row_h = (self.height() - header_h) / rows
-        if pos.y() < header_h:
-            return
+        row_h = (self.height() - HEADER_H) / rows
         col = int(pos.x() / col_w)
-        row = int((pos.y() - header_h) / row_h)
+        row = int((pos.y() - HEADER_H) / row_h)
         idx = row * 7 + col
         if 0 <= idx < len(self.cells):
+            return idx
+        return None
+
+    def mouseMoveEvent(self, event):
+        pos = event.position() if hasattr(event, "position") else event.localPos()
+        idx = self._idx_at(pos)
+        if idx != self._hover_idx:
+            self._hover_idx = idx
+            self.update()
+        if idx is not None:
+            self.setCursor(Qt.PointingHandCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+
+    def leaveEvent(self, event):
+        if self._hover_idx is not None:
+            self._hover_idx = None
+            self.update()
+        self.setCursor(Qt.ArrowCursor)
+
+    def mousePressEvent(self, event):
+        pos = event.position() if hasattr(event, "position") else event.localPos()
+        idx = self._idx_at(pos)
+        if idx is not None:
             self.day_clicked.emit(self.cells[idx])

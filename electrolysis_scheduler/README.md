@@ -2,21 +2,39 @@
 
 A local, offline desktop app for scheduling appointments, tracking clients,
 and recording payments for a solo electrolysis practice. Built per
-`electrolysis_scheduler_spec.txt` (Draft v3.0): Python 3.13 + PySide6 (Qt) +
+`electrolysis_scheduler_spec.txt` (Draft v4.0): Python 3.13 + PySide6 (Qt) +
 SQLite, packaged as a standalone Windows `.exe` with PyInstaller. No cloud,
 no network calls, no email/SMS.
 
 ## What's included
 
 - Admin password gate to open the app at all (bcrypt-hashed, never stored in plaintext)
-- Day / Week / Month calendar with click-to-book, business-hours shading,
-  blocked-time (hatched) blocks, and status color coding
+- Week / Month calendar (no separate day view). Week shows only the actual
+  open-for-business windows as self-contained cards (e.g. a separate morning
+  card and evening card) — closed time isn't rendered at all — with
+  blocked-time (hatched) blocks and status color coding within each card
+- Past dates are grayed out and locked from new bookings on both the month
+  and week views; existing appointments already booked on a past day stay
+  clickable so Admin can still view who was booked
+- A "Next Available Appointment" label on the Appointments tab, always kept
+  up to date; click it to jump to and flash that slot
 - Business-hour + 15-minute-minimum + 1–14-minute unbookable-gap enforcement
-- Client database (search, quick-add during booking, archive instead of delete)
-- Start/End session timing → auto-calculated price ($2.50/min) on completion
+- Appointments can have more than one client on the same slot, each billed
+  independently and sequentially (Start/End Session per client, with an
+  auto-suggested "start the next client" prompt when one finishes)
+- Appointment form: click-to-suggest earliest start time, a pre-validated
+  duration dropdown, and a date picker that blocks past dates for new
+  appointments
+- Client quick-add/light-edit popup during booking — last name required,
+  first name optional, phone required and auto-formatted as
+  `(XXX) XXX-XXXX`, no notes field
+- Start/End session timing → auto-calculated price ($2.50/min) on completion,
+  per client
 - Payments, running client balance (credit/debt), CSV export by date range
-- Second admin-password gate specifically for editing business hours or
-  blocking/unblocking time (spec 7.4)
+- Admin-password-gated client detail view (balance, full appointment/payment
+  history, archive) reachable by double-clicking a client in the Billing tab
+- Second admin-password gate specifically for editing business hours,
+  blocking/unblocking time, or viewing client details (spec 7.4)
 - Local-only SQLite database in `%APPDATA%\ElectrolysisScheduler\scheduler.db`
 
 ## Project layout
@@ -24,21 +42,21 @@ no network calls, no email/SMS.
 ```
 main.py                   Entry point (password gate -> main window)
 app/
-  db.py                    Schema + default business hours + connection
-  models.py                CRUD for clients/appointments/payments/blocked_times/business_hours
+  db.py                    Schema (appointments + appointment_clients join table) + migration + connection
+  models.py                CRUD for clients/appointments/appointment_clients/payments/blocked_times/business_hours
   auth.py                  bcrypt password hashing/verification
-  scheduling.py            Business-hours + gap + conflict validation, next-open-slot finder
+  scheduling.py            Business-hours + gap + conflict validation, duration options, start-time suggestion
   billing.py                Price calculation, CSV export
-  paths.py, util.py         App-data directory, small formatting helpers
+  paths.py, util.py         App-data directory, phone/name formatting helpers
 ui/
   login_dialog.py           Password gate (first-run setup + unlock)
-  main_window.py             Tabs (Calendar / Clients / Billing) + Admin menu
-  calendar_view.py            Day/Week grid, toolbar, navigation
-  month_view.py                Month grid
-  appointment_dialog.py        Book/edit/Start-End-session/cancel/no-show
-  client_dialog.py              Add/edit client (also used as quick-add popup)
-  clients_view.py                Client list + detail panel
-  billing_view.py                 Record payments, balances, CSV export
+  main_window.py             Tabs (Appointments / Billing) + Admin menu
+  calendar_view.py            Week grid of business-hours cards, toolbar, navigation, past-day graying
+  month_view.py                Month grid, past days grayed, every day routes to week view
+  appointment_dialog.py        Book/edit; multiple clients per slot, each with independent Start/End-session/cancel/no-show
+  client_dialog.py              Quick-add/light-edit popup (last name + phone required, first name optional) used during booking
+  client_detail_dialog.py        Admin-gated balance + full history + archive (opened from Billing)
+  billing_view.py                 Record payments, balances, CSV export, client detail launcher
   block_time_dialog.py             Block a slot/day off (reason required)
   business_hours_dialog.py          Edit weekly business hours (Phase 3, admin-gated)
 ```

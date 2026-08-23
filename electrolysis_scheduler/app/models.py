@@ -1,8 +1,20 @@
-"""Data access layer: plain CRUD functions over the SQLite tables."""
+"""Data access layer: plain CRUD functions over the SQLite tables.
+
+An appointment is a booked calendar slot (a time block). One or more
+clients can be attached to it via appointment_clients, each with their own
+status/session/price - so a shared slot can still be billed one client at a
+time, sequentially (see AppointmentDialog)."""
+from datetime import datetime, timedelta
+
 from app.db import get_connection, now_iso
 
 ACTIVE_STATUSES = ("scheduled", "in_process", "completed")
 ALL_STATUSES = ("scheduled", "in_process", "completed", "cancelled", "no_show")
+
+# Priority order used to pick one overall status/color for an appointment
+# block that may have clients in different states (spec: color-code by
+# status). Earliest-listed status "wins" when present on any client.
+_STATUS_PRIORITY = ("in_process", "scheduled", "completed", "no_show", "cancelled")
 
 
 # ---------------- Clients ----------------
@@ -54,94 +66,168 @@ def list_clients(search="", include_archived=False):
 
 # ---------------- Appointments ----------------
 
-def create_appointment(client_id, start_dt, end_dt, notes="", status="scheduled"):
+def _derive_status(client_rows):
+    statuses = {r["status"] for r in client_rows}
+    for s in _STATUS_PRIORITY:
+        if s in statuses:
+            return s
+    return "cancelled"
+
+
+def _clients_for_appointments(conn, appt_ids):
+    if not appt_ids:
+        return {}
+    placeholders = ",".join("?" * len(appt_ids))
+    rows = conn.execute(
+        f"SELECT ac.*, c.first_name, c.last_name, c.phone FROM appointment_clients ac "
+        f"JOIN clients c ON c.id = ac.client_id WHERE ac.appointment_id IN ({placeholders}) "
+        f"ORDER BY ac.appointment_id, ac.order_index",
+        appt_ids,
+    ).fetchall()
+    by_appt = {}
+    for r in rows:
+        by_appt.setdefault(r["appointment_id"], []).append(r)
+    return by_appt
+
+
+def _bundle(appt_row, client_rows):
+    d = dict(appt_row)
+    d["clients"] = client_rows
+    d["status"] = _derive_status(client_rows)
+    d["first_name"] = client_rows[0]["first_name"] if client_rows else ""
+    d["last_name"] = client_rows[0]["last_name"] if client_rows else "(no client)"
+    return d
+
+
+def _bundle_rows(conn, appt_rows):
+    appt_ids = [r["id"] for r in appt_rows]
+    by_appt = _clients_for_appointments(conn, appt_ids)
+    return [_bundle(r, by_appt.get(r["id"], [])) for r in appt_rows]
+
+
+def is_appointment_active(appt_bundle) -> bool:
+    return any(c["status"] in ACTIVE_STATUSES for c in appt_bundle["clients"])
+
+
+def create_appointment(client_ids, start_dt, end_dt, notes=""):
+    if not client_ids:
+        raise ValueError("An appointment needs at least one client")
     conn = get_connection()
     with conn:
         cur = conn.execute(
-            "INSERT INTO appointments (client_id, start_datetime, end_datetime, status, notes, price, created_at) "
-            "VALUES (?, ?, ?, ?, ?, NULL, ?)",
-            (client_id, start_dt.isoformat(timespec="minutes"), end_dt.isoformat(timespec="minutes"),
-             status, notes.strip(), now_iso()),
+            "INSERT INTO appointments (start_datetime, end_datetime, notes, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (start_dt.isoformat(timespec="minutes"), end_dt.isoformat(timespec="minutes"),
+             notes.strip(), now_iso()),
+        )
+        appt_id = cur.lastrowid
+        for idx, client_id in enumerate(client_ids):
+            conn.execute(
+                "INSERT INTO appointment_clients (appointment_id, client_id, order_index, status) "
+                "VALUES (?, ?, ?, 'scheduled')",
+                (appt_id, client_id, idx),
+            )
+    return appt_id
+
+
+def add_client_to_appointment(appt_id, client_id):
+    conn = get_connection()
+    with conn:
+        max_idx = conn.execute(
+            "SELECT COALESCE(MAX(order_index), -1) AS m FROM appointment_clients WHERE appointment_id=?",
+            (appt_id,),
+        ).fetchone()["m"]
+        cur = conn.execute(
+            "INSERT INTO appointment_clients (appointment_id, client_id, order_index, status) "
+            "VALUES (?, ?, ?, 'scheduled')",
+            (appt_id, client_id, max_idx + 1),
         )
     return cur.lastrowid
 
 
-def update_appointment(appt_id, client_id, start_dt, end_dt, notes):
+def remove_appointment_client(appt_client_id):
+    conn = get_connection()
+    with conn:
+        conn.execute("DELETE FROM appointment_clients WHERE id=?", (appt_client_id,))
+
+
+def update_appointment(appt_id, start_dt, end_dt, notes):
     conn = get_connection()
     with conn:
         conn.execute(
-            "UPDATE appointments SET client_id=?, start_datetime=?, end_datetime=?, notes=? WHERE id=?",
-            (client_id, start_dt.isoformat(timespec="minutes"), end_dt.isoformat(timespec="minutes"),
+            "UPDATE appointments SET start_datetime=?, end_datetime=?, notes=? WHERE id=?",
+            (start_dt.isoformat(timespec="minutes"), end_dt.isoformat(timespec="minutes"),
              notes.strip(), appt_id),
         )
 
 
-def set_appointment_status(appt_id, status):
+def set_client_status(appt_client_id, status):
     conn = get_connection()
     with conn:
-        conn.execute("UPDATE appointments SET status=? WHERE id=?", (status, appt_id))
+        conn.execute("UPDATE appointment_clients SET status=? WHERE id=?", (status, appt_client_id))
 
 
-def start_session(appt_id, started_at_iso):
+def start_client_session(appt_client_id, started_at_iso):
     conn = get_connection()
     with conn:
         conn.execute(
-            "UPDATE appointments SET status='in_process', session_started_at=? WHERE id=?",
-            (started_at_iso, appt_id),
+            "UPDATE appointment_clients SET status='in_process', session_started_at=? WHERE id=?",
+            (started_at_iso, appt_client_id),
         )
 
 
-def end_session(appt_id, price):
+def end_client_session(appt_client_id, price):
     conn = get_connection()
     with conn:
         conn.execute(
-            "UPDATE appointments SET status='completed', price=? WHERE id=?",
-            (price, appt_id),
+            "UPDATE appointment_clients SET status='completed', price=? WHERE id=?",
+            (price, appt_client_id),
         )
 
 
 def get_appointment(appt_id):
     conn = get_connection()
-    return conn.execute("SELECT * FROM appointments WHERE id=?", (appt_id,)).fetchone()
+    row = conn.execute("SELECT * FROM appointments WHERE id=?", (appt_id,)).fetchone()
+    if row is None:
+        return None
+    return _bundle(row, _clients_for_appointments(conn, [appt_id]).get(appt_id, []))
 
 
 def list_appointments_between(start_dt, end_dt, exclude_id=None):
     conn = get_connection()
-    query = (
-        "SELECT a.*, c.first_name, c.last_name FROM appointments a "
-        "JOIN clients c ON c.id = a.client_id "
-        "WHERE a.start_datetime < ? AND a.end_datetime > ?"
-    )
+    query = "SELECT * FROM appointments WHERE start_datetime < ? AND end_datetime > ?"
     params = [end_dt.isoformat(timespec="minutes"), start_dt.isoformat(timespec="minutes")]
     if exclude_id is not None:
-        query += " AND a.id != ?"
+        query += " AND id != ?"
         params.append(exclude_id)
-    query += " ORDER BY a.start_datetime"
-    return conn.execute(query, params).fetchall()
+    query += " ORDER BY start_datetime"
+    rows = conn.execute(query, params).fetchall()
+    return _bundle_rows(conn, rows)
 
 
 def list_appointments_for_day(date_, exclude_id=None):
     conn = get_connection()
     day_start = date_.isoformat()
-    from datetime import timedelta
     next_day = (date_ + timedelta(days=1)).isoformat()
-    query = (
-        "SELECT a.*, c.first_name, c.last_name FROM appointments a "
-        "JOIN clients c ON c.id = a.client_id "
-        "WHERE a.start_datetime >= ? AND a.start_datetime < ?"
-    )
+    query = "SELECT * FROM appointments WHERE start_datetime >= ? AND start_datetime < ?"
     params = [day_start, next_day]
     if exclude_id is not None:
-        query += " AND a.id != ?"
+        query += " AND id != ?"
         params.append(exclude_id)
-    query += " ORDER BY a.start_datetime"
-    return conn.execute(query, params).fetchall()
+    query += " ORDER BY start_datetime"
+    rows = conn.execute(query, params).fetchall()
+    return _bundle_rows(conn, rows)
 
 
 def list_appointments_for_client(client_id):
+    """Each row is this client's own sub-session (status/price/session
+    timing) on a shared appointment slot, joined with that slot's timing."""
     conn = get_connection()
     return conn.execute(
-        "SELECT * FROM appointments WHERE client_id=? ORDER BY start_datetime DESC", (client_id,)
+        "SELECT ac.*, a.start_datetime, a.end_datetime, a.notes AS appointment_notes "
+        "FROM appointment_clients ac JOIN appointments a ON a.id = ac.appointment_id "
+        "WHERE ac.client_id=? ORDER BY a.start_datetime DESC",
+        (client_id,),
     ).fetchall()
 
 
@@ -179,7 +265,7 @@ def client_balance(client_id):
     """Positive = client owes money. Negative = client has a credit."""
     conn = get_connection()
     charged = conn.execute(
-        "SELECT COALESCE(SUM(price), 0) AS total FROM appointments "
+        "SELECT COALESCE(SUM(price), 0) AS total FROM appointment_clients "
         "WHERE client_id=? AND status='completed'",
         (client_id,),
     ).fetchone()["total"]
