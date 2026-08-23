@@ -116,17 +116,19 @@ class MonthGridWidget(QWidget):
             in_month = d.month == self.month
             is_today = d == today
             is_past = self._is_past(d)
-            is_hover = idx == self._hover_idx and in_month
+            # Past days aren't clickable for new bookings, so they're never
+            # given the hover highlight that signals "you can click this".
+            is_hover = idx == self._hover_idx and in_month and not is_past
 
             bg = QColor("#ffffff") if in_month else QColor("#f8fafc")
             if is_past and in_month:
-                bg = QColor("#f1f5f9")
+                bg = QColor("#e2e8f0")
             if is_hover:
                 bg = QColor("#eff6ff")
             p.fillRect(rect, bg)
 
             if is_past and in_month:
-                p.fillRect(rect.adjusted(2, 2, -2, -2), QColor(203, 213, 225, 70))
+                p.fillRect(rect.adjusted(2, 2, -2, -2), QColor(148, 163, 184, 130))
 
             if d in self.blocked_days:
                 p.fillRect(rect.adjusted(2, 2, -2, -2), QColor(226, 232, 240, 140))
@@ -196,7 +198,10 @@ class MonthGridWidget(QWidget):
         if idx != self._hover_idx:
             self._hover_idx = idx
             self.update()
-        if idx is not None:
+        # A grayed-out past day shouldn't also get the "clickable" pointing
+        # hand cursor - that combination is exactly what read as "obviously
+        # non-clickable" was missing.
+        if idx is not None and not self._is_past(self.cells[idx]):
             self.setCursor(Qt.PointingHandCursor)
         else:
             self.setCursor(Qt.ArrowCursor)

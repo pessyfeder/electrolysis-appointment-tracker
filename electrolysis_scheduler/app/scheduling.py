@@ -132,36 +132,26 @@ def _round_up(dt, step=DURATION_STEP_MINUTES):
     return dt + timedelta(minutes=step)
 
 
-def bookable_start_candidates(date_, min_duration=MIN_APPOINTMENT_MINUTES, exclude_id=None):
-    """Every start datetime on the given date where a `min_duration`-minute
-    appointment could be booked: the start of each business-hours block,
-    plus the moment each existing appointment in that block ends - i.e.
-    the openings between appointments. Used to populate the start-time
-    picker (spec 8: clients may only schedule by picking a listed,
-    permissible time, never by typing one in)."""
+def bookable_start_candidates(date_, min_duration=MIN_APPOINTMENT_MINUTES, exclude_id=None,
+                               step=DURATION_STEP_MINUTES):
+    """Every start time on the given date, at `step`-minute intervals, where
+    a `min_duration`-minute appointment could be booked - i.e. every
+    5-minute tick across business hours that doesn't overlap an existing
+    appointment/blocked time or leave an unbookable 1-14 minute gap. Used
+    to populate the start-time dropdown (spec 8: clients may only schedule
+    by picking a listed, permissible time, never by typing one in)."""
     now = datetime.now()
     if date_ < now.date():
         return []
-    day_appts = sorted(
-        [a for a in models.list_appointments_for_day(date_, exclude_id=exclude_id)
-         if a["status"] in models.ACTIVE_STATUSES],
-        key=lambda a: a["start_datetime"],
-    )
     found = []
     for block_start, block_end in business_blocks_for_date(date_):
-        candidates = [block_start]
-        for a in day_appts:
-            a_end = datetime.fromisoformat(a["end_datetime"])
-            if block_start <= a_end <= block_end:
-                candidates.append(a_end)
-        for cand_start in sorted(set(candidates)):
-            if date_ == now.date():
-                cand_start = max(cand_start, _round_up(now))
-            cand_end = cand_start + timedelta(minutes=min_duration)
-            if cand_end > block_end:
-                continue
-            if is_bookable(cand_start, cand_end, exclude_id=exclude_id):
-                found.append(cand_start)
+        cand = block_start
+        if date_ == now.date():
+            cand = max(cand, _round_up(now, step))
+        while cand + timedelta(minutes=min_duration) <= block_end:
+            if is_bookable(cand, cand + timedelta(minutes=min_duration), exclude_id=exclude_id):
+                found.append(cand)
+            cand += timedelta(minutes=step)
     return found
 
 
