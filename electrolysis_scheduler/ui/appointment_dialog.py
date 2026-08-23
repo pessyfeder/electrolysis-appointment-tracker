@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QComboBox, QDateEdit, QTimeEdit,
-    QTextEdit, QPushButton, QLabel, QMessageBox, QCompleter, QGroupBox, QFrame
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QComboBox, QDateEdit,
+    QTextEdit, QPushButton, QLabel, QMessageBox, QCompleter, QGroupBox, QFrame,
+    QListWidget, QListWidgetItem
 )
 from PySide6.QtCore import QDate, QTime, Qt
 
@@ -30,20 +31,21 @@ STATUS_ROW_STYLES = {
 }
 
 
-class _NoticeTimeEdit(QTimeEdit):
-    """The start time can always be typed in directly. The first time the
-    field gains focus for a given date, it also pops up a notice listing
-    that date's permissible (bookable) start times, rather than silently
-    overwriting whatever the user has typed."""
+class _StartTimeButton(QPushButton):
+    """The start time is never typed - it can only be set by picking one of
+    the listed permissible times (spec 8: 'The only way a client can
+    schedule is by clicking an available time'). A button is used instead
+    of an editable field so there's no text cursor inviting typing, which
+    was flagged as confusing on an unteditable field."""
 
-    def __init__(self, on_focus, parent=None):
+    def __init__(self, on_click, parent=None):
         super().__init__(parent)
-        self._on_focus = on_focus
-
-    def focusInEvent(self, event):
-        super().focusInEvent(event)
-        if self.isEnabled():
-            self._on_focus()
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet(
+            "text-align: left; padding: 4px 8px; border: 1px solid #cbd5e1; "
+            "border-radius: 4px; background: #ffffff;"
+        )
+        self.clicked.connect(on_click)
 
 
 class AppointmentDialog(QDialog):
@@ -104,9 +106,8 @@ class AppointmentDialog(QDialog):
             self.date_edit.setMinimumDate(QDate.currentDate())
         self.date_edit.setEnabled(self._timing_editable)
 
-        self._notified_date = None
-        self.time_edit = _NoticeTimeEdit(self._notify_start_times)
-        self.time_edit.setDisplayFormat("h:mm AP")
+        self._start_qtime = None
+        self.time_edit = _StartTimeButton(self._open_start_time_picker)
         self.time_edit.setEnabled(self._timing_editable)
 
         self.duration_combo = QComboBox()
@@ -117,13 +118,15 @@ class AppointmentDialog(QDialog):
             s = datetime.fromisoformat(appt_row["start_datetime"])
             e = datetime.fromisoformat(appt_row["end_datetime"])
             self.date_edit.setDate(QDate(s.year, s.month, s.day))
-            self.time_edit.setTime(QTime(s.hour, s.minute))
+            self._set_start_time(QTime(s.hour, s.minute))
             initial_duration = int((e - s).total_seconds() // 60)
         elif start_dt:
             self.date_edit.setDate(QDate(start_dt.year, start_dt.month, start_dt.day))
-            self.time_edit.setTime(QTime(start_dt.hour, start_dt.minute))
+            self._set_start_time(QTime(start_dt.hour, start_dt.minute))
         else:
             self.date_edit.setDate(QDate.currentDate())
+            default_start = scheduling.earliest_bookable_start(datetime.now().date())
+            self._set_start_time(QTime(default_start.hour, default_start.minute) if default_start else QTime(0, 0))
 
         form.addRow("Date: *", self.date_edit)
         form.addRow("Start time: *", self.time_edit)
@@ -134,7 +137,6 @@ class AppointmentDialog(QDialog):
 
         if self._timing_editable:
             self.date_edit.dateChanged.connect(self._on_date_or_time_changed)
-            self.time_edit.timeChanged.connect(self._on_date_or_time_changed)
             self.duration_combo.currentIndexChanged.connect(self._refresh_end_label)
             self._refresh_duration_options(initial=initial_duration)
         else:
@@ -185,11 +187,14 @@ class AppointmentDialog(QDialog):
 
     def _current_start(self):
         d = self.date_edit.date()
-        t = self.time_edit.time()
+        t = self._start_qtime or QTime(0, 0)
         return datetime(d.year(), d.month(), d.day(), t.hour(), t.minute())
 
+    def _set_start_time(self, qtime):
+        self._start_qtime = qtime
+        self.time_edit.setText(qtime.toString("h:mm AP"))
+
     def _on_date_or_time_changed(self):
-        self._notified_date = None
         self._refresh_duration_options()
 
     def _refresh_duration_options(self, initial=None):
@@ -217,35 +222,56 @@ class AppointmentDialog(QDialog):
         end = self._current_start() + timedelta(minutes=minutes)
         self.end_time_label.setText(format_12h(end))
 
-    def _notify_start_times(self):
-        """Shown once per date the field is focused on (spec: 'clicking on
-        Appointment Start Time should pop up window notifying user of
-        permissible start times'). Purely informational - it never touches
-        the field's value, so manually typed times are never overwritten."""
+    def _open_start_time_picker(self):
+        """The only way to set the start time: pick one from the list of
+        permissible times for the selected date (business-hours openings,
+        plus the moment each existing appointment ends). Manual typing is
+        not offered at all (spec 8)."""
         if not self._timing_editable:
             return
         d = self.date_edit.date().toPython()
-        if self._notified_date == d:
-            return
-        self._notified_date = d
-
-        blocks = scheduling.business_blocks_for_date(d)
-        if not blocks:
+        candidates = scheduling.bookable_start_candidates(d, exclude_id=self.appt_id)
+        if not candidates:
             QMessageBox.information(
                 self, "No Availability",
-                f"{d.strftime('%A, %b %d')} has no business hours open."
+                f"No permissible start times remain on {d.strftime('%A, %b %d')}."
             )
             return
 
-        lines = [f"• {format_12h(s)} – {format_12h(e)}" for s, e in blocks]
-        message = f"Business hours on {d.strftime('%A, %b %d')}:\n" + "\n".join(lines)
-        earliest = scheduling.earliest_bookable_start(d, exclude_id=self.appt_id)
-        if earliest:
-            message += f"\n\nEarliest available start time: {format_12h(earliest)}"
-        else:
-            message += "\n\nNo open start times remain on this date."
-        message += "\n\nYou can type any start time directly into the field."
-        QMessageBox.information(self, "Permissible Start Times", message)
+        picker = QDialog(self)
+        picker.setWindowTitle("Choose a Start Time")
+        picker.setMinimumWidth(260)
+        v = QVBoxLayout(picker)
+        v.addWidget(QLabel(f"Permissible start times on {d.strftime('%A, %b %d')}:"))
+        list_widget = QListWidget()
+        for i, dt in enumerate(candidates):
+            label = format_12h(dt) + ("  (earliest)" if i == 0 else "")
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, dt)
+            list_widget.addItem(item)
+        list_widget.setCurrentRow(0)
+        list_widget.itemDoubleClicked.connect(lambda _: picker.accept())
+        v.addWidget(list_widget)
+
+        btn_row = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(picker.reject)
+        choose_btn = QPushButton("Choose")
+        choose_btn.setDefault(True)
+        choose_btn.clicked.connect(picker.accept)
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(choose_btn)
+        v.addLayout(btn_row)
+
+        if picker.exec() != QDialog.Accepted:
+            return
+        item = list_widget.currentItem()
+        if not item:
+            return
+        chosen = item.data(Qt.UserRole)
+        self._set_start_time(QTime(chosen.hour, chosen.minute))
+        self._on_date_or_time_changed()
 
     # ---- client list ----
 

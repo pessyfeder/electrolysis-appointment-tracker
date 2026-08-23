@@ -132,18 +132,22 @@ def _round_up(dt, step=DURATION_STEP_MINUTES):
     return dt + timedelta(minutes=step)
 
 
-def earliest_bookable_start(date_, min_duration=MIN_APPOINTMENT_MINUTES, exclude_id=None):
-    """Earliest start datetime on the given date where a `min_duration`-minute
-    appointment could be booked, respecting business hours and the gap rule.
-    Returns None if no such slot exists that day."""
+def bookable_start_candidates(date_, min_duration=MIN_APPOINTMENT_MINUTES, exclude_id=None):
+    """Every start datetime on the given date where a `min_duration`-minute
+    appointment could be booked: the start of each business-hours block,
+    plus the moment each existing appointment in that block ends - i.e.
+    the openings between appointments. Used to populate the start-time
+    picker (spec 8: clients may only schedule by picking a listed,
+    permissible time, never by typing one in)."""
     now = datetime.now()
     if date_ < now.date():
-        return None
+        return []
     day_appts = sorted(
         [a for a in models.list_appointments_for_day(date_, exclude_id=exclude_id)
          if a["status"] in models.ACTIVE_STATUSES],
         key=lambda a: a["start_datetime"],
     )
+    found = []
     for block_start, block_end in business_blocks_for_date(date_):
         candidates = [block_start]
         for a in day_appts:
@@ -157,8 +161,16 @@ def earliest_bookable_start(date_, min_duration=MIN_APPOINTMENT_MINUTES, exclude
             if cand_end > block_end:
                 continue
             if is_bookable(cand_start, cand_end, exclude_id=exclude_id):
-                return cand_start
-    return None
+                found.append(cand_start)
+    return found
+
+
+def earliest_bookable_start(date_, min_duration=MIN_APPOINTMENT_MINUTES, exclude_id=None):
+    """Earliest start datetime on the given date where a `min_duration`-minute
+    appointment could be booked, respecting business hours and the gap rule.
+    Returns None if no such slot exists that day."""
+    candidates = bookable_start_candidates(date_, min_duration, exclude_id=exclude_id)
+    return candidates[0] if candidates else None
 
 
 def valid_durations(start_dt, exclude_id=None, step=DURATION_STEP_MINUTES):
