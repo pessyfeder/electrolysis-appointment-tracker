@@ -4,7 +4,8 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QComboBox, QDateEdit,
     QTextEdit, QPushButton, QLabel, QMessageBox, QCompleter, QGroupBox, QFrame
 )
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate, Qt, QEvent, QPoint, QPointF
+from PySide6.QtGui import QMouseEvent
 
 from app import models, scheduling, billing
 from app.util import format_12h, format_client_name, format_phone, format_duration_minutes
@@ -30,9 +31,34 @@ STATUS_ROW_STYLES = {
 }
 
 
+class _ClickToOpenDateEdit(QDateEdit):
+    """Clicking anywhere on the field opens the calendar popup - the same
+    click-to-open behavior as the start-time dropdown - instead of
+    requiring the small calendar-icon button specifically. Past dates are
+    excluded via minimumDate, which Qt's calendar renders grayed out and
+    refuses to select.
+
+    Implemented by replaying the click at the button's own position and
+    routing it straight to QDateEdit's real handler (bypassing this
+    override, which would otherwise re-enter itself and recurse forever)."""
+
+    def mousePressEvent(self, event):
+        if self.isEnabled() and self.calendarPopup():
+            pos = QPoint(max(0, self.width() - 12), self.height() // 2)
+            press = QMouseEvent(QEvent.MouseButtonPress, QPointF(pos), self.mapToGlobal(pos),
+                                 Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+            release = QMouseEvent(QEvent.MouseButtonRelease, QPointF(pos), self.mapToGlobal(pos),
+                                   Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+            QDateEdit.mousePressEvent(self, press)
+            QDateEdit.mouseReleaseEvent(self, release)
+        else:
+            super().mousePressEvent(event)
+
+
 class AppointmentDialog(QDialog):
-    def __init__(self, parent=None, appt_row=None, start_dt=None, client_id=None):
+    def __init__(self, parent=None, appt_row=None, start_dt=None, client_id=None, require_admin=None):
         super().__init__(parent)
+        self.require_admin = require_admin or (lambda: True)
         self.appt_row = appt_row
         self.appt_id = appt_row["id"] if appt_row else None
         self._is_new = appt_row is None
@@ -82,9 +108,12 @@ class AppointmentDialog(QDialog):
 
         form = QFormLayout()
 
-        self.date_edit = QDateEdit()
+        self.date_edit = _ClickToOpenDateEdit()
         self.date_edit.setCalendarPopup(True)
-        if self._is_new:
+        if self._timing_editable:
+            # Past dates are never bookable, whether this is a brand-new
+            # appointment or an editable (not-yet-started) one being
+            # rescheduled - grayed out and unselectable in the calendar.
             self.date_edit.setMinimumDate(QDate.currentDate())
         self.date_edit.setEnabled(self._timing_editable)
 
@@ -277,6 +306,7 @@ class AppointmentDialog(QDialog):
 
         if status == "scheduled":
             start_btn = QPushButton("Start Session")
+            start_btn.setToolTip("Requires the admin password")
             start_btn.clicked.connect(lambda checked=False, c=c: self._start_client(c))
             h.addWidget(start_btn)
             no_show_btn = QPushButton("No-Show")
@@ -292,6 +322,7 @@ class AppointmentDialog(QDialog):
         elif status == "in_process":
             end_btn = QPushButton("End Session")
             end_btn.setStyleSheet("font-weight: 600;")
+            end_btn.setToolTip("Requires the admin password")
             end_btn.clicked.connect(lambda checked=False, c=c: self._end_client(c))
             h.addWidget(end_btn)
 
@@ -401,12 +432,20 @@ class AppointmentDialog(QDialog):
         if self._is_new:
             QMessageBox.information(self, "Save First", "Save the appointment before starting a session.")
             return
+        # Starting a session begins the billing clock, so it's admin-gated
+        # to prevent an accidental tap from starting the wrong client.
+        if not self.require_admin():
+            return
         from app.db import now_iso
         models.start_client_session(c["id"], now_iso())
         self.result_changed = True
         self._reload_from_db()
 
     def _end_client(self, c):
+        # Ending a session locks in the billed price, so it's admin-gated
+        # for the same reason starting one is.
+        if not self.require_admin():
+            return
         started = c.get("session_started_at")
         started_dt = datetime.fromisoformat(started) if started else datetime.fromisoformat(self.appt_row["start_datetime"])
         ended_dt = datetime.now()

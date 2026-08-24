@@ -597,7 +597,7 @@ class CalendarView(QWidget):
 
     def _open_appointment(self, appt_row, start_dt=None):
         from ui.appointment_dialog import AppointmentDialog
-        dlg = AppointmentDialog(self, appt_row=appt_row, start_dt=start_dt)
+        dlg = AppointmentDialog(self, appt_row=appt_row, start_dt=start_dt, require_admin=self.require_admin)
         if dlg.exec() and dlg.result_changed:
             self.refresh()
 
