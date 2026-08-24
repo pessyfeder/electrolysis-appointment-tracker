@@ -414,7 +414,7 @@ class CalendarView(QWidget):
     def __init__(self, parent=None, require_admin=None):
         super().__init__(parent)
         self.require_admin = require_admin or (lambda: True)
-        self.mode = "month"
+        self.mode = "week"
         self.anchor_date = date.today()
         self._next_available = None
 
@@ -433,7 +433,7 @@ class CalendarView(QWidget):
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Month", "Week"])
-        self.mode_combo.setCurrentText("Month")
+        self.mode_combo.setCurrentText("Week")
         self.mode_combo.currentTextChanged.connect(self._on_mode_change)
         toolbar.addWidget(self.mode_combo)
 
