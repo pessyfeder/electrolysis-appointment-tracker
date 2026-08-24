@@ -1,10 +1,10 @@
 ELECTROLYSIS APPOINTMENT SCHEDULER - SPEC DOC
 
 Prepared for: Pessy Friedman
-Date: August 20, 2026
-Status: Draft v4.0 - revised after v1 build feedback (multi-client
-appointments, past-date lockout, client-form simplification, dropped
-day view)
+Date: August 23, 2026
+Status: Draft v5.0 - revised after v4 build feedback (start-time picker
+redesign, admin-gated sessions, required/optional field marking, default
+view change)
 
 ================================================================
 
@@ -71,7 +71,8 @@ enterprise practice-management system.
 
 4. TECH STACK
 
-Language: Python 3.11+
+Language: Python 3.13 (embedded interpreter bundled with the app - see
+  4. Packaging below; Mom doesn't need Python installed separately)
 
 GUI framework: PySide6 (Qt for Python)
   Recommended over Tkinter/Kivy - better-looking widgets out of the box
@@ -199,8 +200,10 @@ SQLite schema (v3):
 7. FUNCTIONAL REQUIREMENTS
 
 7.1 Calendar & Appointment Booking
-- Main screen shows a calendar in month or week views (default: month
-  view). There is no separate day view - week is granular enough to
+- Main screen shows a calendar in month or week views (default: week
+  view - it shows fuller, color-coded appointment cards with the
+  client's status right on them, vs. month view's compact time+name
+  chips). There is no separate day view - week is granular enough to
   manage a day's bookings, so it was dropped to keep the app simpler.
 - Clicking a day on the month grid jumps to the week view for that day.
   Past days are grayed out and their empty time is not clickable - you
@@ -215,19 +218,30 @@ SQLite schema (v3):
 - Appointment form fields: one or more clients, date/time, duration (or
   end time), appointment notes (optional), status (per client - see
   below). Price is calculated automatically per client (7.3), not typed
-  in.
-    - Clicking the date field pops up the calendar picker; for a new
-      appointment it won't let you pick a date before today.
-    - Clicking into the start-time field auto-fills it with the earliest
-      currently-available start time for the selected date (respecting
-      business hours and the gap rule below); you can still adjust it
-      from there.
+  in. Required fields are marked with "*" (with a "* Required" legend on
+  the form); fields that aren't required say so in their label, e.g.
+  "Notes (optional)" - never both a label and a placeholder saying the
+  same thing.
+    - Clicking anywhere on the date field (not just its small calendar
+      icon) pops up the calendar picker. Dates before today are grayed
+      out and can't be selected - whenever the date is still editable,
+      not just for a brand-new appointment (see the "locked once started"
+      rule below - a reschedule of a not-yet-started future appointment
+      is still subject to this same past-date lockout).
+    - The start time is never typed in. Clicking the start-time field
+      opens a dropdown listing every start time, in 5-minute intervals,
+      on the selected date where a booking is actually possible -
+      respecting business hours, existing appointments, and the gap rule
+      below - with the earliest one marked. Picking an entry displays it
+      in the field; that's the only way to set it.
     - Duration is chosen from a list of valid options in 5-minute steps,
       starting at 15 minutes and going up to (business-hours block end
       time - appointment start time). The list automatically excludes any
       duration that would overlap the next appointment or leave an
       unbookable 1-14 minute gap before it (see the gap rule below), so
       it's not possible to pick an invalid duration in the first place.
+      Durations of an hour or longer display as e.g. "1 hour 15 minutes"
+      rather than "75 min".
 - Multiple clients per appointment: a single calendar slot can have more
   than one client attached (e.g. a parent and child booked together).
   They are still treated - and billed - one at a time: Start Session on
@@ -248,7 +262,11 @@ SQLite schema (v3):
 - Appointments are color-coded by status (scheduled / in progress /
   completed / cancelled / no-show); a shared appointment with clients in
   different states shows the most relevant color (in-progress and
-  scheduled take priority over finished/cancelled states).
+  scheduled take priority over finished/cancelled states). Inside the
+  appointment form, each client's own row is likewise color-coded to
+  match their status and labels it in text (e.g. "Completed - $37.50"),
+  updating immediately when the status changes - not only after the form
+  is reopened.
 - App auto-suggests the next available slot / a gap between two booked
   slots by flashing it.
 - Once any client on an appointment has actually started their session
@@ -318,9 +336,15 @@ SQLite schema (v3):
 - Click Start Session / End Session on a client's row - times that
   client's session, calculates time x rate, displays amount owed at the
   end of the session based on actual time worked, not based on time
-  scheduled.
+  scheduled. Both actions require re-entering the Admin password first
+  (same extra confirmation as editing business hours/blocked time, see
+  7.4) - this guards against an accidental tap starting the wrong
+  client's billing clock, or ending one early. Booking a new appointment,
+  rescheduling, and cancelling are NOT gated - only starting/ending a
+  session is.
     - That client's status becomes "In Progress" once Start Session is
-      clicked, remaining so until End Session is clicked, at which point
+      clicked (and the password confirmed), remaining so until End
+      Session is clicked (again password-confirmed), at which point
       their status becomes "Completed" and their price is calculated and
       shown.
     - When an appointment has more than one client attached to the same
@@ -341,6 +365,10 @@ SQLite schema (v3):
   or unblocking a time slot/day - requires re-entering the Admin
   password as an extra confirmation step, separate from the one used to
   open the app.
+- Starting or ending a client's session (Start Session / End Session,
+  see 7.3) requires that same extra password confirmation, since it
+  starts/stops the billing clock and locks in the charged price -
+  mistakes there are harder to walk back than a booking mistake.
 - Store only a hash of the password locally (e.g. via bcrypt or a
   similar library) - never store or log the plaintext password.
 
@@ -360,22 +388,25 @@ SQLite schema (v3):
 8. UI/UX REQUIREMENTS
 
 Screens:
-1. Calendar/Dashboard (default view on launch) - month/week
-   appointment calendar (no separate day view - see 7.1), "add
-   appointment" button, quick view of today's schedule, and the ability
-   to block off time directly on the calendar. Past dates are grayed out
-   and not clickable for new bookings, but existing appointments on them
-   stay clickable so Admin can view who was booked.
+1. Calendar/Dashboard (week view by default on launch, month view also
+   available - see 7.1) - "add appointment" button, quick view of
+   today's schedule, and the ability to block off time directly on the
+   calendar. Past dates are grayed out and not clickable for new
+   bookings, but existing appointments on them stay clickable so Admin
+   can view who was booked.
 2. Clients - searchable list + detail panel (contact info, history,
    balance).
 	- Client panel should pop up during booking process; not be displayed
-seperately.
+	  separately.
 3. Appointment form (modal or side panel) - create/edit an appointment
    with one or more clients attached (shows each client's
-   auto-calculated price once their session completes). Date field pops
-   up a calendar picker; start-time field auto-suggests the earliest
-   open time; duration is picked from a pre-validated list of options
-   (see 7.1).
+   auto-calculated price once their session completes, color-coded and
+   labeled by status). Clicking the date field pops up a calendar
+   picker (past dates grayed out); clicking the start-time field opens a
+   dropdown of every permissible 5-minute-interval time - there's no
+   typed entry for either; duration is picked from a pre-validated list
+   of options (see 7.1). Starting or ending a client's session prompts
+   for the Admin password (see 7.3/7.4).
 4. Billing - record payments, view balances, export reports.
 
 General UX notes:
@@ -383,14 +414,21 @@ General UX notes:
   to open, fast to add an appointment, minimal clicks for the most
   common action (booking a new appointment for an existing client).
 - The Admin password is prompted once at launch to open the app at all
-  (see 7.4). A second password prompt appears only when editing time
-  availability (business hours or blocked time) - routine booking,
+  (see 7.4). A second password prompt appears when editing time
+  availability (business hours or blocked time) or starting/ending a
+  client's session (7.3) - routine booking, rescheduling, cancelling,
   client entry, and payment recording don't require re-entering it.
 - Clear visual distinction between appointment statuses (scheduled /
-  in process / completed / cancelled / no-show) via color coding.
+  in process / completed / cancelled / no-show) via color coding, both
+  on the calendar and on each client's row within the appointment form.
 - Blocked time should be visually distinct from booked appointments on
   the calendar (e.g. a hatched/greyed-out block). Past dates use a
-  separate grayed-out treatment to signal "view only, not bookable."
+  separate grayed-out treatment to signal "view only, not bookable" -
+  both on the month/week calendar and in the appointment form's date
+  picker.
+- Every form marks which fields are required ("*", with a legend) vs.
+  optional (stated once, in the field's label) - never left ambiguous,
+  and never stated as optional in two places at once.
 
 ================================================================
 
@@ -398,7 +436,12 @@ General UX notes:
 
 - Reliability: the app must not lose data on crash - write to SQLite
   with transactions; auto-save rather than requiring an explicit "save"
-  step.
+  step. The packaged build runs windowed (no console window on
+  Windows), so an unhandled error is caught, appended to a local
+  error.log file (in the same app-data folder as the database), and
+  shown to Mom in a dialog - rather than the app silently doing nothing,
+  which is otherwise indistinguishable from a bug that just doesn't
+  work.
 - Performance: should feel instant for a single-user dataset (expected
   to be at most a few thousand clients/appointments) - no meaningful
   performance engineering required at this scale.
@@ -449,9 +492,39 @@ Phase 4 - Multi-Client Appointments & Scheduling UX (this revision)
 - Appointments can have more than one client attached to the same slot,
   each billed independently and sequentially (Start/End Session per
   client, with an auto-suggested "start the next client" prompt)
-- Appointment form: click-to-suggest start time, a pre-validated duration
-  list, and a date picker that won't allow picking a past date for a new
+- Appointment form: click-to-suggest start time (superseded by the
+  click-only dropdown in Phase 5 below), a pre-validated duration list,
+  and a date picker that won't allow picking a past date for a new
   appointment
+
+Phase 5 - Scheduling UX Refinements & Session Safeguards (this revision)
+- Start-time field redesigned as a click-only dropdown listing every
+  permissible 5-minute-interval time on the selected date, replacing the
+  old "auto-fills the earliest time, still editable by typing" behavior
+  - there is no way to type a start time anymore
+- Date field opens its calendar picker on a click anywhere in the field
+  (not just the small icon), and the past-date lockout now applies
+  whenever the date is editable, not only for brand-new appointments
+- Start Session / End Session gated behind the Admin password (7.3/7.4),
+  to prevent an accidental tap from starting/ending the wrong client's
+  billed session
+- Required vs. optional fields marked consistently across all forms
+  ("*" + legend for required; stated once, in the label, for optional)
+- Durations of an hour or more display as "x hour(s) x minutes" instead
+  of raw minutes
+- Per-client session rows inside the appointment form are color-coded to
+  match their status, in addition to already showing the status as text,
+  and now update immediately (not only after reopening the form)
+- Default calendar view on launch changed from month to week, since week
+  view's fuller appointment cards read as more "finished" than month
+  view's compact chips
+- Record Payment: the client dropdown is now resolved by matching its
+  actual selected/typed text, instead of trusting whatever was last
+  selected - previously, typing a name to filter the list without
+  clicking a suggestion could silently record the payment against the
+  wrong (previously-selected) client
+- Unhandled errors are now caught, logged, and shown in a dialog instead
+  of failing silently (see Non-Functional Requirements)
 
 ================================================================
 
