@@ -496,7 +496,16 @@ class CalendarView(QWidget):
         self.month_view.day_clicked.connect(self._on_month_day_clicked)
         outer.addWidget(self.month_view)
 
-        self.refresh()
+        # Deliberately NOT calling self.refresh() here. This widget is
+        # constructed while the main window is still off-screen, before
+        # it's been laid out to its real on-screen size (its width is a
+        # transitional, too-small placeholder at this point - verified
+        # directly: ~640px here vs. the ~1176px it actually ends up at).
+        # month_view/grid paint themselves using their live width, so
+        # populating them now would produce one visibly squished/misaligned
+        # frame that lingers until something later forces a repaint at the
+        # correct size. MainWindow.showEvent() does the first refresh()
+        # once this view is actually on-screen at its true size instead.
 
     # ---- navigation ----
     def _on_mode_change(self, text):
