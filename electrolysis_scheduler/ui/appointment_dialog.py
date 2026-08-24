@@ -2,7 +2,8 @@ from datetime import datetime, timedelta
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QComboBox, QDateEdit,
-    QTextEdit, QPushButton, QLabel, QMessageBox, QCompleter, QGroupBox, QFrame
+    QTextEdit, QPushButton, QLabel, QMessageBox, QCompleter, QGroupBox, QFrame,
+    QApplication
 )
 from PySide6.QtCore import QDate, Qt, QEvent, QPoint, QPointF
 from PySide6.QtGui import QMouseEvent
@@ -337,6 +338,12 @@ class AppointmentDialog(QDialog):
                 f"Overall status: {STATUS_LABELS.get(self.appt_row['status'], self.appt_row['status'])}"
             )
         self._rebuild_client_rows()
+        # Several callers (e.g. End Session) immediately pop a modal
+        # QMessageBox right after this. Without forcing the pending layout/
+        # paint to flush first, the freshly recolored row wouldn't actually
+        # get drawn until something later forced a repaint - it would look
+        # like the color change only "took" after reopening the dialog.
+        QApplication.processEvents()
 
     def _edit_client_info(self, c):
         dlg = ClientDialog(self, client_row=models.get_client(c["client_id"]))
