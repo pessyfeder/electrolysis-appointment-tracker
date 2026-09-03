@@ -12,4 +12,20 @@ Questions for Mom:
 ---
 - cursor should not be able to enter uneditable text field. It looks very confusing.
 - actually, Start times should NOT be able to be manually inputted, but there needs to be a popup with permissible start times, with the earliest / between two appointments suggested.
-The only way a client can schedule is by clicking an available time.
+The only way a for a client to schedule is by clicking an available time.
+---
+- past dates in Monthly calendar need to be grayed out so as to be obviously non-clickable
+-clicking start time should stimulate dropdown with ALL possible start times in 5 min intervals. 
+	selecting start time should display it in "Start time" window.
+--- 
+- appointment label should list start and end times (x - x)
+- initially, client should only be able to create session. Once session is created, client can cancel or reschedule. Only Admin can start and end session (requires password entry) to prevent mistakes.
+- booking appointment day should be similar to time - clicking the space triggers dropdown with calendar. Non-selectable days (past) should appear so by being grayed out.
+---
+- appointment windows don't resize when app resizes.
+- app?
+- start session and no-show text doesn't fit on the buttons when appointment is initially scheduled
+- start session, end session, no-show buttons should not appear when appointment is initially scheduled
+- Admin password required pop-up should just say: "Enter Admin password"
+- only allow clicking "start session", "no show", or any appointment status button on appointment day. Appointments in past should only be able to be viewed; today or future can also be rescheduled, edited or cancelled. Admin can edit business hours only for today or future. 
+- if Admin changes / blocks off business hours on a day that already has appointments scheduled, she must reschedule / cancel those appointments.

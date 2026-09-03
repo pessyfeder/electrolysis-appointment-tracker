@@ -1,10 +1,10 @@
 ELECTROLYSIS APPOINTMENT SCHEDULER - SPEC DOC
 
 Prepared for: Pessy Friedman
-Date: August 23, 2026
-Status: Draft v5.0 - revised after v4 build feedback (start-time picker
-redesign, admin-gated sessions, required/optional field marking, default
-view change)
+Date: September 2, 2026
+Status: Draft v6.0 - revised after v5 build feedback (Day view
+reintroduced, Admin restructured into a tabbed hub with its own password
+gate, scheduling-confirmation ticket, custom frameless window chrome)
 
 ================================================================
 
@@ -200,18 +200,29 @@ SQLite schema (v3):
 7. FUNCTIONAL REQUIREMENTS
 
 7.1 Calendar & Appointment Booking
-- Main screen shows a calendar in month or week views (default: week
-  view - it shows fuller, color-coded appointment cards with the
+- Main screen shows a calendar with a Day / Week / Month toggle (default:
+  week view - it shows fuller, color-coded appointment cards with the
   client's status right on them, vs. month view's compact time+name
-  chips). There is no separate day view - week is granular enough to
-  manage a day's bookings, so it was dropped to keep the app simpler.
-- Clicking a day on the month grid jumps to the week view for that day.
+  chips). Day view shows a single day's business-hours blocks as a wide
+  time grid, with a plain, always-readable list of that day's
+  appointments (time, client, status) alongside it - useful once a day
+  gets busy enough that week view's narrower columns get cramped.
+- Clicking a day on the month grid jumps to the day view for that date.
   Past days are grayed out and their empty time is not clickable - you
   can't create a new appointment on a date that's already gone. Existing
   appointments already booked on a past day remain fully clickable so
   Admin can view which client(s) were booked and their contact info; only
   creating new bookings on past dates is blocked.
-- Click an open time slot in the week view to create a new appointment;
+- On today specifically, each business-hours time block grays out on its
+  own once that block's end time has passed, rather than waiting for the
+  whole day to end - e.g. a 10:30am-1:30pm block reads as done by 9pm
+  even though a 7:30-10:30pm block on the same day hasn't ended yet. This
+  only affects the visual cue and whether new bookings can be made in
+  that block; an appointment already sitting in a grayed block stays
+  fully clickable, and Start/End Session (7.3) for a client on today's
+  schedule remains available no matter what time it currently is.
+- Click an open time slot in the week or day view to create a new
+  appointment;
   select an existing client, quick-add a new one inline, or attach more
   than one client to the same slot (see "Multiple clients per
   appointment" below).
@@ -269,6 +280,9 @@ SQLite schema (v3):
   is reopened.
 - App auto-suggests the next available slot / a gap between two booked
   slots by flashing it.
+- Successfully scheduling or rescheduling an appointment shows a brief
+  confirmation "ticket" (client name(s), date, time, and notes) as a
+  final on-screen recap before the form closes.
 - Once any client on an appointment has actually started their session
   (or the appointment's start time has passed), its date/time/duration
   can no longer be changed - only status actions and adding/managing
@@ -361,10 +375,20 @@ SQLite schema (v3):
 - Once the app is open, no further password is needed for routine use:
   creating, rescheduling, or cancelling appointments; entering client
   info; and recording payments.
-- Editing time availability - i.e. changing business hours, or blocking
-  or unblocking a time slot/day - requires re-entering the Admin
-  password as an extra confirmation step, separate from the one used to
-  open the app.
+- Switching from the Appointments tab into the Admin tab (7.4/8 - Edit
+  Business Hours, Block Time Off, and Billing all live there) requires
+  re-entering the Admin password as an extra confirmation step, separate
+  from the one used to open the app. The prompt appears - and the tab
+  switch either happens or doesn't - before any Admin content becomes
+  visible, so a wrong or cancelled password never flashes the screen
+  before reverting. Because reaching Edit Business Hours or Block Time
+  Off now requires having already cleared this gate to get into the
+  Admin tab in the first place, saving changes on either of those two
+  screens doesn't re-prompt a second time.
+- Right-clicking a specific slot directly on the calendar to block it off
+  is a separate, still-live shortcut that doesn't go through the Admin
+  tab - it keeps its own password prompt each time, since it's reachable
+  without ever entering Admin.
 - Starting or ending a client's session (Start Session / End Session,
   see 7.3) requires that same extra password confirmation, since it
   starts/stops the billing clock and locks in the charged price -
@@ -387,17 +411,24 @@ SQLite schema (v3):
 
 8. UI/UX REQUIREMENTS
 
+The app has two top-level tabs: Appointments and Admin. Admin requires
+re-entering the Admin password to switch into (see 7.4).
+
 Screens:
-1. Calendar/Dashboard (week view by default on launch, month view also
-   available - see 7.1) - "add appointment" button, quick view of
-   today's schedule, and the ability to block off time directly on the
-   calendar. Past dates are grayed out and not clickable for new
-   bookings, but existing appointments on them stay clickable so Admin
-   can view who was booked.
+1. Appointments (Calendar/Dashboard) - Day / Week / Month toggle (week
+   view by default on launch - see 7.1), a "Schedule Appointment"
+   button, quick view of the current schedule, and the ability to block
+   off a specific slot directly on the calendar via right-click. Past
+   dates are grayed out and not clickable for new bookings, but existing
+   appointments on them stay clickable so Admin can view who was booked;
+   on today, each business-hours block grays out individually once it
+   has ended (see 7.1).
 2. Clients - searchable list + detail panel (contact info, history,
    balance).
 	- Client panel should pop up during booking process; not be displayed
-	  separately.
+	  separately. Popups opened from within a form (adding/picking a
+	  client, editing info) open centered over that form rather than
+	  wherever the OS would otherwise place them.
 3. Appointment form (modal or side panel) - create/edit an appointment
    with one or more clients attached (shows each client's
    auto-calculated price once their session completes, color-coded and
@@ -406,18 +437,33 @@ Screens:
    dropdown of every permissible 5-minute-interval time - there's no
    typed entry for either; duration is picked from a pre-validated list
    of options (see 7.1). Starting or ending a client's session prompts
-   for the Admin password (see 7.3/7.4).
-4. Billing - record payments, view balances, export reports.
+   for the Admin password (see 7.3/7.4). A successful create/reschedule
+   shows a confirmation "ticket" recapping the client(s), date, time,
+   and notes.
+4. Admin - a segmented sub-tab strip (Edit Business Hours / Block Time
+   Off / Billing) that opens on Edit Business Hours by default;
+   switching between the three swaps the content in place rather than
+   opening separate dialogs or pages. Billing records payments, shows
+   client balances, and exports reports (see 7.3). Reaching this tab at
+   all requires the Admin password (see 7.4).
 
 General UX notes:
 - Should feel like a lightweight, single-purpose business tool - fast
   to open, fast to add an appointment, minimal clicks for the most
   common action (booking a new appointment for an existing client).
 - The Admin password is prompted once at launch to open the app at all
-  (see 7.4). A second password prompt appears when editing time
-  availability (business hours or blocked time) or starting/ending a
-  client's session (7.3) - routine booking, rescheduling, cancelling,
-  client entry, and payment recording don't require re-entering it.
+  (see 7.4). A second password prompt appears when switching into the
+  Admin tab (which holds Edit Business Hours, Block Time Off, and
+  Billing), when right-clicking to block off a specific calendar slot
+  directly, or when starting/ending a client's session (7.3) - routine
+  booking, rescheduling, cancelling, client entry, and payment recording
+  don't require re-entering it.
+- The main window and the scheduling-confirmation ticket popup use a
+  custom-drawn title bar (drag to move, minimize/maximize/close, still
+  resizable from the window's edges) instead of the operating system's
+  native one, so their appearance doesn't depend on the OS's window
+  theme or accent color. The app launches maximized so its full layout
+  is visible right away without the user needing to resize the window.
 - Clear visual distinction between appointment statuses (scheduled /
   in process / completed / cancelled / no-show) via color coding, both
   on the calendar and on each client's row within the appointment form.
@@ -483,12 +529,14 @@ Phase 3 - Polish & Optional Enhancements
 - Manual local backup helper (e.g. a "copy database file to..." button),
   if the no-backup risk noted in 7.5 becomes a concern later
 
-Phase 4 - Multi-Client Appointments & Scheduling UX (this revision)
+Phase 4 - Multi-Client Appointments & Scheduling UX
 - Simplified client form: last name only required, phone auto-formatted,
   no notes prompt
 - Past dates grayed out and locked from new bookings, while remaining
   viewable for Admin
-- Dropped the separate day view - month and week only
+- Dropped the separate day view - month and week only (reintroduced in
+  Phase 6 below once appointment volume made a day-at-a-time view
+  genuinely useful again)
 - Appointments can have more than one client attached to the same slot,
   each billed independently and sequentially (Start/End Session per
   client, with an auto-suggested "start the next client" prompt)
@@ -497,7 +545,7 @@ Phase 4 - Multi-Client Appointments & Scheduling UX (this revision)
   and a date picker that won't allow picking a past date for a new
   appointment
 
-Phase 5 - Scheduling UX Refinements & Session Safeguards (this revision)
+Phase 5 - Scheduling UX Refinements & Session Safeguards
 - Start-time field redesigned as a click-only dropdown listing every
   permissible 5-minute-interval time on the selected date, replacing the
   old "auto-fills the earliest time, still editable by typing" behavior
@@ -525,6 +573,52 @@ Phase 5 - Scheduling UX Refinements & Session Safeguards (this revision)
   wrong (previously-selected) client
 - Unhandled errors are now caught, logged, and shown in a dialog instead
   of failing silently (see Non-Functional Requirements)
+
+Phase 6 - Day View, Admin Hub & Window Chrome (this revision)
+- Reintroduced a Day view (Day / Week / Month toggle) - a single day's
+  business-hours blocks as a wide time grid, alongside a plain, always-
+  readable list of that day's appointments (time, client, status);
+  supersedes Phase 4's decision to drop it, since a day-at-a-time view
+  proved genuinely useful once appointment volume grew. Overlapping
+  appointments in this view cascade with a wide, readable offset instead
+  of being squeezed into equal-width slivers.
+- Clicking a date on the month grid now opens the day view for that
+  date, rather than the week view
+- A day's business-hours time blocks gray out individually once their
+  own end time has passed, rather than only once the whole day is in the
+  past (see 7.1) - this is a display/new-booking rule only; Start/End
+  Session for a client already on today's schedule stays available
+  regardless of the time of day
+- Billing is no longer its own top-level tab; it now lives inside a new
+  Admin tab alongside Edit Business Hours and Block Time Off, presented
+  as a segmented sub-tab strip that opens on Edit Business Hours by
+  default
+- Switching into the Admin tab now requires the Admin password, checked
+  before the tab visually changes at all (so a failed/cancelled attempt
+  never flashes Admin content on screen). Because that's now the only
+  way to reach Edit Business Hours or Block Time Off - their direct
+  buttons on the calendar toolbar were removed - saving on either no
+  longer separately re-prompts. Right-clicking a calendar slot to block
+  it off directly is unaffected and still prompts on its own, since it
+  doesn't go through the Admin tab.
+- Month view redesigned as a centered, rounded card (rather than a flat
+  rectangle stretched to the window's full width) with a clear month/
+  year header of its own
+- A confirmation "ticket" (client(s), date, time, notes) is shown after
+  successfully scheduling or rescheduling an appointment
+- Child dialogs opened from within a form (adding/picking a client,
+  editing client info) now open centered over their parent instead of
+  wherever the OS would otherwise place them
+- Main window and the scheduling-confirmation ticket now use a custom-
+  drawn title bar (drag to move, minimize/maximize/close, still
+  resizable from the window's edges) instead of the native OS one, so
+  their appearance doesn't depend on the OS's window theme/accent color
+- App launches maximized so its full layout is visible without the user
+  needing to resize it
+- "Add Appointment" button relabeled "Schedule Appointment"
+- Fixed: an editable client-picker dropdown (e.g. "+ Add Client",
+  Record Payment's client field) could flash open and immediately close
+  again on click instead of staying open to choose from
 
 ================================================================
 

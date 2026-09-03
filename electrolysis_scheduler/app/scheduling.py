@@ -57,8 +57,11 @@ def validate_appointment(start_dt, end_dt, exclude_id=None):
     if length_minutes < MIN_APPOINTMENT_MINUTES:
         raise SchedulingError(f"Appointments must be at least {MIN_APPOINTMENT_MINUTES} minutes long.")
 
-    if start_dt.date() < datetime.now().date():
+    now = datetime.now()
+    if start_dt.date() < now.date():
         raise SchedulingError("That date is in the past.")
+    if start_dt < now:
+        raise SchedulingError("That time has already passed today.")
 
     block = _containing_block(start_dt, end_dt)
     if block is None:

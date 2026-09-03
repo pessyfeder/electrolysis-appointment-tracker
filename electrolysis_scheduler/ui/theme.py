@@ -24,7 +24,7 @@ QToolTip {
 
 /* ---- Tabs ---- */
 QTabWidget::pane {
-    border: 1px solid #e2e8f0;
+    border: 1px solid #cbd5e1;
     background: #ffffff;
     border-radius: 6px;
     top: -1px;
@@ -108,7 +108,7 @@ QCheckBox {
 /* ---- Lists / tables ---- */
 QListWidget, QTableWidget {
     background: #ffffff;
-    border: 1px solid #e2e8f0;
+    border: 1px solid #cbd5e1;
     border-radius: 6px;
     gridline-color: #f1f5f9;
     alternate-background-color: #f8fafc;
@@ -122,26 +122,28 @@ QListWidget::item:selected, QTableWidget::item:selected {
 }
 QHeaderView::section {
     background: #f1f5f9;
-    color: #475569;
-    padding: 6px;
+    color: #334155;
+    padding: 7px 6px;
     border: none;
-    border-bottom: 1px solid #e2e8f0;
-    font-weight: 600;
+    border-bottom: 2px solid #94a3b8;
+    font-weight: 700;
 }
 
 /* ---- Group boxes ---- */
 QGroupBox {
-    border: 1px solid #e2e8f0;
+    border: 1px solid #cbd5e1;
     border-radius: 6px;
-    margin-top: 14px;
-    padding-top: 10px;
+    margin-top: 22px;
+    padding-top: 12px;
     font-weight: 600;
     background: #ffffff;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
+    subcontrol-position: top left;
     left: 10px;
-    padding: 0 4px;
+    top: -4px;
+    padding: 2px 4px;
     color: #334155;
 }
 

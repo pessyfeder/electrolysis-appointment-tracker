@@ -151,11 +151,51 @@ def _migrate_to_multi_client_appointments(conn):
     conn.execute("DROP TABLE appointments_old")
 
 
+def _migrate_payments_appointment_fk(conn):
+    """_migrate_to_multi_client_appointments() above renames appointments to
+    appointments_old and recreates it - SQLite responds to that rename by
+    rewriting every OTHER table's foreign key text that pointed at
+    appointments(id) to instead say appointments_old(id), so it keeps
+    pointing at the same physical table through the rename. That's exactly
+    right for appointment_clients, which this same function recreates
+    afterwards pointing back at the real appointments table - but payments
+    predates that migration and was never recreated, so its foreign key was
+    left permanently pointing at appointments_old, which then gets dropped.
+    From that point on, with PRAGMA foreign_keys=ON, SQLite refuses most
+    statements against payments at all (not just ones touching the missing
+    parent) because it can't resolve the FK's parent table while preparing
+    the statement. Detect that drift and rebuild payments with the correct
+    foreign key, preserving every row."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='payments'"
+    ).fetchone()
+    if row is None or "appointments_old" not in row["sql"]:
+        return
+    conn.execute("ALTER TABLE payments RENAME TO payments_old")
+    conn.execute(
+        "CREATE TABLE payments ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "client_id INTEGER NOT NULL REFERENCES clients(id), "
+        "appointment_id INTEGER REFERENCES appointments(id), "
+        "amount REAL NOT NULL, "
+        "method TEXT NOT NULL, "
+        "paid_at TEXT NOT NULL, "
+        "notes TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO payments (id, client_id, appointment_id, amount, method, paid_at, notes) "
+        "SELECT id, client_id, appointment_id, amount, method, paid_at, notes FROM payments_old"
+    )
+    conn.execute("DROP TABLE payments_old")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_payment_client ON payments(client_id)")
+
+
 def init_db():
     conn = get_connection()
     with conn:
         conn.executescript(SCHEMA)
         _migrate_to_multi_client_appointments(conn)
+        _migrate_payments_appointment_fk(conn)
 
         count = conn.execute("SELECT COUNT(*) AS c FROM business_hours").fetchone()["c"]
         if count == 0:

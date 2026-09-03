@@ -99,10 +99,10 @@ class MonthGridWidget(QWidget):
         header_font.setBold(True)
         header_font.setPointSize(9)
         p.setFont(header_font)
-        p.setPen(QPen(QColor("#94a3b8")))
+        p.setPen(QPen(QColor("#64748b")))
         for i, name in enumerate(DAY_NAMES):
             p.drawText(QRectF(i * col_w, 0, col_w, HEADER_H), Qt.AlignCenter, name.upper())
-        p.setPen(QPen(QColor("#e2e8f0")))
+        p.setPen(QPen(QColor("#94a3b8"), 2))
         p.drawLine(0, HEADER_H, int(self.width()), HEADER_H)
 
         today = date.today()
@@ -122,13 +122,13 @@ class MonthGridWidget(QWidget):
 
             bg = QColor("#ffffff") if in_month else QColor("#f8fafc")
             if is_past and in_month:
-                bg = QColor("#e2e8f0")
+                # A single flat tint reads clearly as "past" on its own -
+                # the extra wash this used to layer on top just made whole
+                # weeks look heavy/muddy once "today" was late in the month.
+                bg = QColor("#eef1f6")
             if is_hover:
                 bg = QColor("#eff6ff")
             p.fillRect(rect, bg)
-
-            if is_past and in_month:
-                p.fillRect(rect.adjusted(2, 2, -2, -2), QColor(148, 163, 184, 130))
 
             if d in self.blocked_days:
                 p.fillRect(rect.adjusted(2, 2, -2, -2), QColor(226, 232, 240, 140))

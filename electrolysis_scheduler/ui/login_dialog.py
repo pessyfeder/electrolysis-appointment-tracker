@@ -73,8 +73,8 @@ def prompt_admin_reauth(parent) -> bool:
     """Used for the second password gate when editing time availability (spec 7.4)."""
     from PySide6.QtWidgets import QInputDialog
     pw, ok = QInputDialog.getText(
-        parent, "Admin Password Required",
-        "Editing business hours / blocked time requires the admin password:",
+        parent, "Enter Admin Password",
+        "Enter Admin Password:",
         QLineEdit.Password,
     )
     if not ok:

@@ -1,15 +1,16 @@
 from datetime import datetime, timedelta
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QComboBox, QDoubleSpinBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QComboBox,
     QTextEdit, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QGroupBox,
-    QDateEdit, QFileDialog, QMessageBox, QHeaderView, QCompleter
+    QFileDialog, QMessageBox, QHeaderView, QCompleter
 )
 from PySide6.QtCore import QDate, Qt
 
 from app import models, billing
 from app.util import format_client_name
 from ui.client_detail_dialog import ClientDetailDialog
+from ui.widgets import ClickToOpenDateEdit, TypeOnlyDoubleSpinBox
 
 METHODS = ["cash", "card", "check", "other"]
 
@@ -39,7 +40,7 @@ class BillingView(QWidget):
         self.balance_preview = QLabel("")
         form.addRow("Current balance:", self.balance_preview)
 
-        self.amount_spin = QDoubleSpinBox()
+        self.amount_spin = TypeOnlyDoubleSpinBox()
         self.amount_spin.setRange(0, 100000)
         self.amount_spin.setPrefix("$")
         self.amount_spin.setDecimals(2)
@@ -86,11 +87,9 @@ class BillingView(QWidget):
         export_box = QGroupBox("Export Payments (CSV)")
         export_layout = QVBoxLayout(export_box)
         range_row = QHBoxLayout()
-        self.start_date_edit = QDateEdit()
-        self.start_date_edit.setCalendarPopup(True)
+        self.start_date_edit = ClickToOpenDateEdit()
         self.start_date_edit.setDate(QDate.currentDate().addMonths(-1))
-        self.end_date_edit = QDateEdit()
-        self.end_date_edit.setCalendarPopup(True)
+        self.end_date_edit = ClickToOpenDateEdit()
         self.end_date_edit.setDate(QDate.currentDate())
         range_row.addWidget(QLabel("From:"))
         range_row.addWidget(self.start_date_edit)

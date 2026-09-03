@@ -1,16 +1,29 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QComboBox, QDateEdit,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QComboBox,
     QTextEdit, QPushButton, QLabel, QMessageBox, QCompleter, QGroupBox, QFrame,
-    QApplication
+    QApplication, QWidget
 )
-from PySide6.QtCore import QDate, Qt, QEvent, QPoint, QPointF
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import QDate, Qt
 
 from app import models, scheduling, billing
 from app.util import format_12h, format_client_name, format_phone, format_duration_minutes
 from ui.client_dialog import ClientDialog
+from ui.widgets import ClickToOpenDateEdit, open_dropdown_on_click
+from ui.frameless import FramelessTitleBar
+
+def _center_over_parent(dlg, parent):
+    """Positions a freshly-constructed child dialog directly over its parent
+    window instead of wherever the OS/window manager would otherwise place
+    it - without this, a picker like "+ Add Client" can end up looking like
+    a second, unrelated window sitting beside the appointment dialog rather
+    than a step within the same flow."""
+    dlg.adjustSize()
+    px = parent.x() + (parent.width() - dlg.width()) // 2
+    py = parent.y() + (parent.height() - dlg.height()) // 2
+    dlg.move(max(0, px), max(0, py))
+
 
 STATUS_LABELS = {
     "scheduled": "Scheduled",
@@ -32,30 +45,6 @@ STATUS_ROW_STYLES = {
 }
 
 
-class _ClickToOpenDateEdit(QDateEdit):
-    """Clicking anywhere on the field opens the calendar popup - the same
-    click-to-open behavior as the start-time dropdown - instead of
-    requiring the small calendar-icon button specifically. Past dates are
-    excluded via minimumDate, which Qt's calendar renders grayed out and
-    refuses to select.
-
-    Implemented by replaying the click at the button's own position and
-    routing it straight to QDateEdit's real handler (bypassing this
-    override, which would otherwise re-enter itself and recurse forever)."""
-
-    def mousePressEvent(self, event):
-        if self.isEnabled() and self.calendarPopup():
-            pos = QPoint(max(0, self.width() - 12), self.height() // 2)
-            press = QMouseEvent(QEvent.MouseButtonPress, QPointF(pos), self.mapToGlobal(pos),
-                                 Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
-            release = QMouseEvent(QEvent.MouseButtonRelease, QPointF(pos), self.mapToGlobal(pos),
-                                   Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
-            QDateEdit.mousePressEvent(self, press)
-            QDateEdit.mouseReleaseEvent(self, release)
-        else:
-            super().mousePressEvent(event)
-
-
 class AppointmentDialog(QDialog):
     def __init__(self, parent=None, appt_row=None, start_dt=None, client_id=None, require_admin=None):
         super().__init__(parent)
@@ -64,8 +53,12 @@ class AppointmentDialog(QDialog):
         self.appt_id = appt_row["id"] if appt_row else None
         self._is_new = appt_row is None
         self.setWindowTitle("Edit Appointment" if appt_row else "New Appointment")
-        self.setMinimumWidth(440)
+        self.setMinimumWidth(580)
         self.result_changed = False
+        # Set by _save() so the calendar can jump/flash to wherever this
+        # appointment actually ended up after a create/reschedule.
+        self.saved_start_dt = None
+        self.saved_end_dt = None
 
         if appt_row:
             self._clients = [dict(r) for r in appt_row["clients"]]
@@ -79,26 +72,48 @@ class AppointmentDialog(QDialog):
                     "session_started_at": None, "price": None,
                 })
 
-        # An appointment whose start time has already gone by is locked from
-        # further date/time editing; likewise once any client's session has
-        # actually started, the timing can no longer be changed retroactively.
-        self._is_past = bool(appt_row and datetime.fromisoformat(appt_row["start_datetime"]) < datetime.now())
+        # Gating is date-based, not time-based: an appointment is "past" only
+        # once its calendar day has gone by. Today's appointment stays fully
+        # editable/cancellable even after its start time has technically
+        # ticked past (spec: past = view only; today or future = reschedule/
+        # edit/cancel allowed). Session status buttons (Start/No-Show/End)
+        # are further restricted to only the appointment's actual day.
+        self._appt_date = datetime.fromisoformat(appt_row["start_datetime"]).date() if appt_row else None
+        self._is_past = bool(appt_row and self._appt_date < date.today())
+        self._is_appt_day = bool(appt_row and self._appt_date == date.today())
         self._any_session_started = any(c["status"] in ("in_process", "completed") for c in self._clients)
         self._timing_editable = self._is_new or (not self._is_past and not self._any_session_started)
+        # For a brand-new appointment the timing fields are live from the
+        # start. For an existing one, _timing_editable only says editing is
+        # *allowed* in principle - the fields themselves stay locked/
+        # read-only until Reschedule is actually clicked, so just opening a
+        # saved appointment to look at it can't accidentally change its time.
+        self._editing_timing = self._is_new
 
         layout = QVBoxLayout(self)
 
         self.status_label = None
         if appt_row:
+            status_row = QHBoxLayout()
             status_label = QLabel(f"Overall status: {STATUS_LABELS.get(appt_row['status'], appt_row['status'])}")
             status_label.setStyleSheet("font-weight: 600;")
-            layout.addWidget(status_label)
+            status_row.addWidget(status_label)
+            status_row.addStretch()
+            if self._timing_editable:
+                # Date/Start time/Duration below start locked/read-only for
+                # a saved appointment - this is the only way to unlock them,
+                # so opening an appointment just to look at it can't
+                # accidentally change its time.
+                reschedule_btn = QPushButton("Reschedule")
+                reschedule_btn.clicked.connect(self._start_reschedule)
+                status_row.addWidget(reschedule_btn)
+            layout.addLayout(status_row)
             self.status_label = status_label
 
-        if appt_row and self._is_past and appt_row["status"] == "scheduled":
+        if appt_row and self._is_past:
             past_note = QLabel(
-                "This appointment's start time has already passed, so its date/time can no "
-                "longer be changed. You can still manage each client's session below."
+                "This appointment's date has already passed, so it can only be viewed - it can "
+                "no longer be rescheduled, edited, or cancelled."
             )
             past_note.setWordWrap(True)
             past_note.setStyleSheet(
@@ -109,20 +124,26 @@ class AppointmentDialog(QDialog):
 
         form = QFormLayout()
 
-        self.date_edit = _ClickToOpenDateEdit()
-        self.date_edit.setCalendarPopup(True)
+        self.date_edit = ClickToOpenDateEdit()
         if self._timing_editable:
             # Past dates are never bookable, whether this is a brand-new
             # appointment or an editable (not-yet-started) one being
             # rescheduled - grayed out and unselectable in the calendar.
             self.date_edit.setMinimumDate(QDate.currentDate())
-        self.date_edit.setEnabled(self._timing_editable)
+            # Likewise for days with no open business hours at all (e.g.
+            # closed weekdays) or that are fully blocked off - there's
+            # nothing to pick a start time from on those, so they're grayed
+            # out and unselectable in the popup too, same as past dates.
+            self.date_edit.set_availability_check(
+                lambda qd: bool(scheduling.bookable_start_candidates(qd.toPython(), exclude_id=self.appt_id))
+            )
+        self.date_edit.setEnabled(self._editing_timing)
 
         self.time_combo = QComboBox()
-        self.time_combo.setEnabled(self._timing_editable)
+        self.time_combo.setEnabled(self._editing_timing)
 
         self.duration_combo = QComboBox()
-        self.duration_combo.setEnabled(self._timing_editable)
+        self.duration_combo.setEnabled(self._editing_timing)
 
         initial_duration = None
         if appt_row:
@@ -158,6 +179,7 @@ class AppointmentDialog(QDialog):
 
         self.notes_edit = QTextEdit(appt_row["notes"] if appt_row and appt_row["notes"] else "")
         self.notes_edit.setFixedHeight(60)
+        self.notes_edit.setReadOnly(self._is_past)
         form.addRow("Notes (optional):", self.notes_edit)
 
         layout.addLayout(form)
@@ -171,15 +193,16 @@ class AppointmentDialog(QDialog):
         self.clients_container = QVBoxLayout()
         clients_box_layout.addLayout(self.clients_container)
 
-        add_row = QHBoxLayout()
-        add_existing_btn = QPushButton("+ Add Client")
-        add_existing_btn.clicked.connect(self._add_existing_client)
-        add_new_btn = QPushButton("+ New Client")
-        add_new_btn.clicked.connect(self._add_new_client)
-        add_row.addWidget(add_existing_btn)
-        add_row.addWidget(add_new_btn)
-        add_row.addStretch()
-        clients_box_layout.addLayout(add_row)
+        if not self._is_past:
+            add_row = QHBoxLayout()
+            add_existing_btn = QPushButton("+ Add Client")
+            add_existing_btn.clicked.connect(self._add_existing_client)
+            add_new_btn = QPushButton("+ New Client")
+            add_new_btn.clicked.connect(self._add_new_client)
+            add_row.addWidget(add_existing_btn)
+            add_row.addWidget(add_new_btn)
+            add_row.addStretch()
+            clients_box_layout.addLayout(add_row)
 
         layout.addWidget(clients_box)
 
@@ -190,11 +213,20 @@ class AppointmentDialog(QDialog):
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
-        save_btn = QPushButton("Save")
-        save_btn.setDefault(True)
-        save_btn.clicked.connect(self._save)
-        btn_row.addWidget(save_btn)
+        if not self._is_past:
+            save_btn = QPushButton("Save")
+            save_btn.setDefault(True)
+            save_btn.clicked.connect(self._save)
+            btn_row.addWidget(save_btn)
         layout.addLayout(btn_row)
+
+        # Without this, Qt's default "focus the first focusable widget" on
+        # dialog open lands on date_edit - which, despite being click-only
+        # (never meant for typing), still shows its date text with the
+        # spin-box's usual keyboard-focus highlight, making it look like an
+        # editable field with something pre-selected. Notes is a plain text
+        # field that shows an ordinary cursor with nothing highlighted.
+        self.notes_edit.setFocus()
 
     # ---- timing helpers ----
 
@@ -264,6 +296,14 @@ class AppointmentDialog(QDialog):
         end = self._current_start() + timedelta(minutes=minutes)
         self.end_time_label.setText(format_12h(end))
 
+    def _start_reschedule(self):
+        self._editing_timing = True
+        self.date_edit.setEnabled(True)
+        self.time_combo.setEnabled(True)
+        self.duration_combo.setEnabled(True)
+        self.date_edit.setFocus()
+        self.date_edit._show_popup()
+
     # ---- client list ----
 
     def _rebuild_client_rows(self):
@@ -301,18 +341,34 @@ class AppointmentDialog(QDialog):
         info.setWordWrap(True)
         h.addWidget(info, 1)
 
+        if self._is_past:
+            return row
+
         edit_btn = QPushButton("Edit Info")
         edit_btn.clicked.connect(lambda checked=False, c=c: self._edit_client_info(c))
         h.addWidget(edit_btn)
 
         if status == "scheduled":
+            # Start Session always appears for a scheduled client so the
+            # option is visible/discoverable, but actually starting one only
+            # makes sense on the appointment's actual day - disabled (not
+            # hidden) otherwise, with a tooltip explaining why. No-Show is
+            # the same idea but there's nothing sensible to disable-and-show
+            # before the day arrives (you can't know someone didn't show up
+            # yet), so it stays hidden until then. Cancel/Remove stay
+            # available any time up through today (today-or-future rule).
             start_btn = QPushButton("Start Session")
-            start_btn.setToolTip("Requires the admin password")
+            if self._is_appt_day:
+                start_btn.setToolTip("Requires the admin password")
+            else:
+                start_btn.setEnabled(False)
+                start_btn.setToolTip("Only available on the appointment's date")
             start_btn.clicked.connect(lambda checked=False, c=c: self._start_client(c))
             h.addWidget(start_btn)
-            no_show_btn = QPushButton("No-Show")
-            no_show_btn.clicked.connect(lambda checked=False, c=c: self._set_status(c, "no_show"))
-            h.addWidget(no_show_btn)
+            if self._is_appt_day:
+                no_show_btn = QPushButton("No-Show")
+                no_show_btn.clicked.connect(lambda checked=False, c=c: self._set_status(c, "no_show"))
+                h.addWidget(no_show_btn)
             cancel_btn = QPushButton("Cancel")
             cancel_btn.clicked.connect(lambda checked=False, c=c: self._set_status(c, "cancelled"))
             h.addWidget(cancel_btn)
@@ -321,6 +377,10 @@ class AppointmentDialog(QDialog):
                 remove_btn.clicked.connect(lambda checked=False, c=c: self._remove_client(c))
                 h.addWidget(remove_btn)
         elif status == "in_process":
+            # Unlike Start/No-Show, End Session isn't day-gated: once a
+            # session has actually started it must always be closeable
+            # (e.g. Admin forgot to end it before midnight), regardless of
+            # what "today" is by the time they get to it.
             end_btn = QPushButton("End Session")
             end_btn.setStyleSheet("font-weight: 600;")
             end_btn.setToolTip("Requires the admin password")
@@ -347,6 +407,7 @@ class AppointmentDialog(QDialog):
 
     def _edit_client_info(self, c):
         dlg = ClientDialog(self, client_row=models.get_client(c["client_id"]))
+        _center_over_parent(dlg, self)
         if dlg.exec():
             updated = models.get_client(c["client_id"])
             c["first_name"], c["last_name"], c["phone"] = updated["first_name"], updated["last_name"], updated["phone"]
@@ -387,6 +448,7 @@ class AppointmentDialog(QDialog):
         completer.setFilterMode(Qt.MatchContains)
         combo.setCompleter(completer)
         combo.setCurrentIndex(-1)
+        open_dropdown_on_click(combo)
         v.addWidget(combo)
         btn_row = QHBoxLayout()
         cancel_btn = QPushButton("Cancel")
@@ -399,6 +461,7 @@ class AppointmentDialog(QDialog):
         btn_row.addWidget(add_btn)
         v.addLayout(btn_row)
 
+        _center_over_parent(picker, self)
         if picker.exec() != QDialog.Accepted:
             return
         # currentIndex() only updates once an item is actually picked from
@@ -418,6 +481,7 @@ class AppointmentDialog(QDialog):
 
     def _add_new_client(self):
         dlg = ClientDialog(self)
+        _center_over_parent(dlg, self)
         if dlg.exec():
             self._attach_client(dlg.client_id)
 
@@ -482,6 +546,80 @@ class AppointmentDialog(QDialog):
         self.result_changed = True
         self._reload_from_db()
 
+    def _show_ticket(self, start_dt, end_dt, notes):
+        """A confirmation "ticket" summarizing what was just booked - shown
+        right after a create/reschedule actually lands, so the date/time/
+        notes that were just chosen are visible one more time before the
+        dialog closes."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Appointment Scheduled")
+        # Frameless so this small popup isn't stuck showing whatever accent
+        # color the OS happens to theme native title bars with.
+        dlg.setWindowFlag(Qt.FramelessWindowHint)
+
+        frame = QFrame()
+        frame.setObjectName("ticketFrame")
+        frame.setStyleSheet("#ticketFrame { background: #f8fafc; border: 1px solid #334155; }")
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(0, 0, 0, 0)
+        frame_layout.setSpacing(0)
+        frame_layout.addWidget(FramelessTitleBar(dlg, "Appointment Scheduled"))
+
+        content = QWidget()
+        v = QVBoxLayout(content)
+        frame_layout.addWidget(content)
+
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(1, 1, 1, 1)
+        outer.addWidget(frame)
+
+        card = QFrame()
+        card.setObjectName("ticketCard")
+        card.setStyleSheet(
+            "#ticketCard { background: #ffffff; border: 2px dashed #94a3b8; border-radius: 10px; }"
+        )
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 16, 20, 16)
+        card_layout.setSpacing(8)
+
+        title = QLabel("✓ Appointment Scheduled")
+        title.setStyleSheet("font-size: 14pt; font-weight: 700; color: #15803d;")
+        card_layout.addWidget(title)
+
+        names = ", ".join(format_client_name(c["first_name"], c["last_name"]) for c in self._clients)
+        if names:
+            client_label = QLabel(names)
+            client_label.setStyleSheet("font-size: 11pt; font-weight: 600; color: #1e293b;")
+            card_layout.addWidget(client_label)
+
+        date_label = QLabel(f"Date: {start_dt.strftime('%A, %B %d, %Y')}")
+        date_label.setStyleSheet("font-size: 10pt; color: #334155;")
+        card_layout.addWidget(date_label)
+
+        time_label = QLabel(f"Time: {format_12h(start_dt)} – {format_12h(end_dt)}")
+        time_label.setStyleSheet("font-size: 10pt; color: #334155;")
+        card_layout.addWidget(time_label)
+
+        if notes.strip():
+            notes_label = QLabel(f"Notes: {notes.strip()}")
+            notes_label.setWordWrap(True)
+            notes_label.setStyleSheet("font-size: 10pt; color: #334155;")
+            card_layout.addWidget(notes_label)
+
+        v.addWidget(card)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        ok_btn = QPushButton("OK")
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(ok_btn)
+        v.addLayout(btn_row)
+
+        dlg.setMinimumWidth(360)
+        _center_over_parent(dlg, self)
+        dlg.exec()
+
     # ---- save ----
 
     def _save(self):
@@ -496,11 +634,25 @@ class AppointmentDialog(QDialog):
 
         start_dt = self._current_start()
         end_dt = start_dt + timedelta(minutes=minutes)
-        try:
-            scheduling.validate_appointment(start_dt, end_dt, exclude_id=self.appt_id)
-        except scheduling.SchedulingError as e:
-            QMessageBox.warning(self, "Can't Book That Time", str(e))
-            return
+
+        # Only re-validate business-hours/overlap/blocked-time rules when the
+        # date/time is actually being changed from what's already saved (a
+        # real create or reschedule). Otherwise Save is just persisting an
+        # unrelated change (notes, a status update) on an existing slot that
+        # was already valid when it was booked - it shouldn't start failing
+        # just because something later made that same, unmoved time
+        # retroactively unbookable (e.g. Admin blocking over it). That slot
+        # still needs rescheduling/cancelling, but that's a deliberate
+        # separate action, not something Save should force in passing.
+        original_start = datetime.fromisoformat(self.appt_row["start_datetime"]) if self.appt_row else None
+        original_end = datetime.fromisoformat(self.appt_row["end_datetime"]) if self.appt_row else None
+        timing_changed = self._is_new or start_dt != original_start or end_dt != original_end
+        if timing_changed:
+            try:
+                scheduling.validate_appointment(start_dt, end_dt, exclude_id=self.appt_id)
+            except scheduling.SchedulingError as e:
+                QMessageBox.warning(self, "Can't Book That Time", str(e))
+                return
 
         notes = self.notes_edit.toPlainText()
         if self.appt_id:
@@ -510,4 +662,11 @@ class AppointmentDialog(QDialog):
             self.appt_id = models.create_appointment(client_ids, start_dt, end_dt, notes)
             self._is_new = False
         self.result_changed = True
+        if timing_changed:
+            # Only a genuine create/reschedule should make the calendar jump
+            # - a Save that only touched notes on an otherwise-unchanged
+            # slot has nowhere new to jump to.
+            self.saved_start_dt = start_dt
+            self.saved_end_dt = end_dt
+            self._show_ticket(start_dt, end_dt, notes)
         self.accept()
