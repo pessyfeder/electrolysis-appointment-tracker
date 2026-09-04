@@ -6,11 +6,12 @@ from PySide6.QtWidgets import (
     QApplication, QWidget
 )
 from PySide6.QtCore import QDate, Qt
+from PySide6.QtGui import QStandardItemModel, QStandardItem, QColor
 
 from app import models, scheduling, billing
 from app.util import format_12h, format_client_name, format_phone, format_duration_minutes
 from ui.client_dialog import ClientDialog
-from ui.widgets import ClickToOpenDateEdit, open_dropdown_on_click
+from ui.widgets import ClickToOpenDateEdit, open_dropdown_on_click, required_label, required_hint_label
 from ui.frameless import FramelessTitleBar
 
 def _center_over_parent(dlg, parent):
@@ -46,9 +47,11 @@ STATUS_ROW_STYLES = {
 
 
 class AppointmentDialog(QDialog):
-    def __init__(self, parent=None, appt_row=None, start_dt=None, client_id=None, require_admin=None):
+    def __init__(self, parent=None, appt_row=None, start_dt=None, client_id=None,
+                 require_admin=None, require_session_admin=None):
         super().__init__(parent)
         self.require_admin = require_admin or (lambda: True)
+        self.require_session_admin = require_session_admin or self.require_admin
         self.appt_row = appt_row
         self.appt_id = appt_row["id"] if appt_row else None
         self._is_new = appt_row is None
@@ -159,9 +162,9 @@ class AppointmentDialog(QDialog):
             self.date_edit.setDate(QDate.currentDate())
             initial_start_dt = scheduling.earliest_bookable_start(datetime.now().date())
 
-        form.addRow("Date: *", self.date_edit)
-        form.addRow("Start time: *", self.time_combo)
-        form.addRow("Duration: *", self.duration_combo)
+        form.addRow(required_label("Date:"), self.date_edit)
+        form.addRow(required_label("Start time:"), self.time_combo)
+        form.addRow(required_label("Duration:"), self.duration_combo)
 
         self.end_time_label = QLabel()
         form.addRow("Ends:", self.end_time_label)
@@ -184,9 +187,7 @@ class AppointmentDialog(QDialog):
 
         layout.addLayout(form)
 
-        required_hint = QLabel("* Required")
-        required_hint.setStyleSheet("color: #64748b; font-size: 11px;")
-        layout.addWidget(required_hint)
+        layout.addWidget(required_hint_label())
 
         clients_box = QGroupBox("Clients on this appointment")
         clients_box_layout = QVBoxLayout(clients_box)
@@ -242,27 +243,85 @@ class AppointmentDialog(QDialog):
         on `date_` that a minimum-length appointment could start at (spec:
         clicking Start Time should show a dropdown with ALL possible start
         times in 5-minute intervals; selecting one displays it in the
-        field). `initial_dt` is kept in the list even if it wouldn't
-        otherwise be offered, so editing an appointment always shows its
-        own current time as an option."""
+        field), grouped under non-selectable "Morning Appointments" /
+        "Evening Appointments" headers - business hours split into an AM
+        and a PM/evening block (see TimeGridWidget), and a long flat list of
+        times reads a lot easier broken up the same way. Each heading names
+        its own actual hours (e.g. "Evening Appointments (7:30 PM - 10:30
+        PM)") rather than a bare generic label, since those hours vary by
+        weekday and can be overridden per-date (see BusinessHoursEditor) -
+        a plain "Evening" heading would otherwise read as always starting
+        at some assumed standard time. `initial_dt` is kept in the list
+        even if it wouldn't otherwise be offered, so editing an appointment
+        always shows its own current time as an option."""
         candidates = scheduling.bookable_start_candidates(date_, exclude_id=self.appt_id)
         if initial_dt is not None and initial_dt not in candidates:
             candidates = sorted(candidates + [initial_dt])
+        earliest = candidates[0] if candidates else None
+
+        all_blocks = scheduling.business_blocks_for_date(date_)
+        am_blocks = [b for b in all_blocks if b[0].hour < 12]
+        pm_blocks = [b for b in all_blocks if b[0].hour >= 12]
+
+        # Grouped by which business-hours BLOCK each candidate actually
+        # falls inside, not by the candidate's own clock hour - an AM block
+        # can run past noon (e.g. 11:30 AM-1:30 PM), and a plain "hour < 12"
+        # check would wrongly sort a perfectly-morning 12:05 PM start into
+        # "Evening Appointments" even though it's nowhere near evening.
+        def in_am_block(dt):
+            return any(bs <= dt < be for bs, be in am_blocks)
 
         self.time_combo.blockSignals(True)
-        self.time_combo.clear()
-        for dt in candidates:
-            label = format_12h(dt)
-            if dt == candidates[0]:
-                label += "  (earliest)"
-            self.time_combo.addItem(label, dt)
-        target = initial_dt if initial_dt is not None else (candidates[0] if candidates else None)
+        model = QStandardItemModel(self.time_combo)
+        groups = [
+            (self._time_group_heading("Morning Appointments", am_blocks),
+             [dt for dt in candidates if in_am_block(dt)]),
+            (self._time_group_heading("Evening Appointments", pm_blocks),
+             [dt for dt in candidates if not in_am_block(dt)]),
+        ]
+        for heading, group in groups:
+            if not group:
+                continue
+            header = QStandardItem(heading)
+            header.setFlags(header.flags() & ~(Qt.ItemIsEnabled | Qt.ItemIsSelectable))
+            font = header.font()
+            font.setBold(True)
+            header.setFont(font)
+            header.setBackground(QColor("#f1f5f9"))
+            model.appendRow(header)
+            for dt in group:
+                label = format_12h(dt)
+                if dt == earliest:
+                    label += "  (earliest)"
+                item = QStandardItem(label)
+                item.setData(dt, Qt.UserRole)
+                model.appendRow(item)
+        self.time_combo.setModel(model)
+
+        target = initial_dt if initial_dt is not None else earliest
         idx = self.time_combo.findData(target) if target is not None else -1
-        if idx < 0 and self.time_combo.count():
-            idx = 0
+        if idx < 0:
+            idx = self._first_selectable_time_index()
         if idx >= 0:
             self.time_combo.setCurrentIndex(idx)
         self.time_combo.blockSignals(False)
+
+    @staticmethod
+    def _time_group_heading(label, blocks):
+        """`label` plus the actual hours those blocks span, e.g. "Morning
+        Appointments (10:30 AM – 1:30 PM)" - or just `label` alone if there
+        are no blocks in this group at all that day."""
+        if not blocks:
+            return label
+        start = min(b[0] for b in blocks)
+        end = max(b[1] for b in blocks)
+        return f"{label} ({format_12h(start)} – {format_12h(end)})"
+
+    def _first_selectable_time_index(self):
+        for i in range(self.time_combo.count()):
+            if self.time_combo.itemData(i, Qt.UserRole) is not None:
+                return i
+        return -1
 
     def _on_date_changed(self):
         self._populate_time_options(self.date_edit.date().toPython())
@@ -503,9 +562,11 @@ class AppointmentDialog(QDialog):
         if self._is_new:
             QMessageBox.information(self, "Save First", "Save the appointment before starting a session.")
             return
-        # Starting a session begins the billing clock, so it's admin-gated
-        # to prevent an accidental tap from starting the wrong client.
-        if not self.require_admin():
+        # Starting a session begins the billing clock, so it re-prompts for
+        # the admin password every time (not just once at login) to prevent
+        # an accidental tap - or a client alone at the computer - from
+        # starting the wrong client's billing.
+        if not self.require_session_admin():
             return
         from app.db import now_iso
         models.start_client_session(c["id"], now_iso())
@@ -513,9 +574,9 @@ class AppointmentDialog(QDialog):
         self._reload_from_db()
 
     def _end_client(self, c):
-        # Ending a session locks in the billed price, so it's admin-gated
-        # for the same reason starting one is.
-        if not self.require_admin():
+        # Ending a session locks in the billed price, so it re-prompts for
+        # the same reason starting one does.
+        if not self.require_session_admin():
             return
         started = c.get("session_started_at")
         started_dt = datetime.fromisoformat(started) if started else datetime.fromisoformat(self.appt_row["start_datetime"])

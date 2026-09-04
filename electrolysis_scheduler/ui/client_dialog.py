@@ -1,10 +1,11 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
-    QHBoxLayout, QMessageBox, QLabel
+    QHBoxLayout, QMessageBox
 )
 
 from app import models
 from app.util import format_phone, is_valid_phone
+from ui.widgets import required_label, required_hint_label
 
 
 class ClientDialog(QDialog):
@@ -28,14 +29,12 @@ class ClientDialog(QDialog):
         self.phone = QLineEdit(format_phone(client_row["phone"]) if client_row else "")
         self.phone.setPlaceholderText("(555) 123-4567")
         self.phone.editingFinished.connect(self._format_phone_field)
-        form.addRow("Last name: *", self.last_name)
+        form.addRow(required_label("Last name:"), self.last_name)
         form.addRow("First name (optional):", self.first_name)
-        form.addRow("Phone: *", self.phone)
+        form.addRow(required_label("Phone:"), self.phone)
         layout.addLayout(form)
 
-        required_hint = QLabel("* Required")
-        required_hint.setStyleSheet("color: #64748b; font-size: 11px;")
-        layout.addWidget(required_hint)
+        layout.addWidget(required_hint_label())
 
         btn_row = QHBoxLayout()
         cancel_btn = QPushButton("Cancel")

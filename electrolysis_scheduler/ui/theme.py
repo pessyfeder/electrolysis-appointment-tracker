@@ -123,9 +123,9 @@ QListWidget::item:selected, QTableWidget::item:selected {
 QHeaderView::section {
     background: #f1f5f9;
     color: #334155;
-    padding: 7px 6px;
+    padding: 3px 6px;
     border: none;
-    border-bottom: 2px solid #94a3b8;
+    border-bottom: 1px solid #94a3b8;
     font-weight: 700;
 }
 

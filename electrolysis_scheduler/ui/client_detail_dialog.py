@@ -2,11 +2,12 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox
+    QTableWidget, QTableWidgetItem, QMessageBox
 )
 
 from app import models
 from app.util import format_12h, format_client_name, format_phone
+from ui.widgets import make_card, style_history_table
 
 STATUS_LABELS = {
     "scheduled": "Scheduled", "in_process": "In Progress", "completed": "Completed",
@@ -17,7 +18,10 @@ STATUS_LABELS = {
 class ClientDetailDialog(QDialog):
     """Admin-gated view of a client's balance, full appointment/payment
     history, and archive toggle. Opened from the Billing tab, or from the
-    calendar when viewing a past day's bookings."""
+    calendar when viewing a past day's bookings. Styled to match the
+    Billing tab's cards rather than plain native-Qt chrome, since this
+    dialog is itself reached from Billing and shows the same kind of data
+    (balances, payment history)."""
 
     def __init__(self, parent, client_id):
         super().__init__(parent)
@@ -26,17 +30,17 @@ class ClientDetailDialog(QDialog):
         self.archived = bool(c["archived"])
         display_name = format_client_name(c["first_name"], c["last_name"])
         self.setWindowTitle(display_name)
-        self.setMinimumSize(480, 560)
+        self.setMinimumSize(560, 620)
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setSpacing(14)
 
-        name_label = QLabel(display_name)
-        name_label.setStyleSheet("font-size: 18px; font-weight: 600;")
-        layout.addWidget(name_label)
-        layout.addWidget(QLabel(f"Phone: {format_phone(c['phone'])}"))
+        header_card, header_layout = make_card(display_name)
+        header_layout.addWidget(QLabel(f"Phone: {format_phone(c['phone'])}"))
 
         self.balance_label = QLabel()
-        layout.addWidget(self.balance_label)
+        header_layout.addWidget(self.balance_label)
         self._refresh_balance()
 
         archive_row = QHBoxLayout()
@@ -44,21 +48,22 @@ class ClientDetailDialog(QDialog):
         self.archive_btn.clicked.connect(self._toggle_archive)
         archive_row.addWidget(self.archive_btn)
         archive_row.addStretch()
-        layout.addLayout(archive_row)
+        header_layout.addLayout(archive_row)
+        outer.addWidget(header_card)
 
-        layout.addWidget(QLabel("Appointment History"))
+        appt_card, appt_layout = make_card("Appointment History")
         self.appt_table = QTableWidget(0, 4)
         self.appt_table.setHorizontalHeaderLabels(["Date", "Status", "Notes", "Price"])
-        self.appt_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.appt_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        layout.addWidget(self.appt_table)
+        style_history_table(self.appt_table, stretch_column=2)
+        appt_layout.addWidget(self.appt_table)
+        outer.addWidget(appt_card, 1)
 
-        layout.addWidget(QLabel("Payment History"))
+        payment_card, payment_layout = make_card("Payment History")
         self.payment_table = QTableWidget(0, 4)
         self.payment_table.setHorizontalHeaderLabels(["Date", "Amount", "Method", "Notes"])
-        self.payment_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.payment_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        layout.addWidget(self.payment_table)
+        style_history_table(self.payment_table, stretch_column=3)
+        payment_layout.addWidget(self.payment_table)
+        outer.addWidget(payment_card, 1)
 
         self._refresh_history()
 
@@ -67,19 +72,19 @@ class ClientDetailDialog(QDialog):
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
         close_row.addWidget(close_btn)
-        layout.addLayout(close_row)
+        outer.addLayout(close_row)
 
     def _refresh_balance(self):
         balance = models.client_balance(self.client_id)
         if balance > 0:
             self.balance_label.setText(f"Balance owed: ${balance:.2f}")
-            self.balance_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #c0392b;")
+            self.balance_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #b91c1c;")
         elif balance < 0:
             self.balance_label.setText(f"Credit on file: ${-balance:.2f}")
-            self.balance_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #1e7e34;")
+            self.balance_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #15803d;")
         else:
             self.balance_label.setText("Balance: $0.00")
-            self.balance_label.setStyleSheet("font-size: 14px; font-weight: 600;")
+            self.balance_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #64748b;")
 
     def _refresh_history(self):
         appts = models.list_appointments_for_client(self.client_id)

@@ -1,10 +1,12 @@
 ELECTROLYSIS APPOINTMENT SCHEDULER - SPEC DOC
 
 Prepared for: Pessy Friedman
-Date: September 2, 2026
-Status: Draft v6.0 - revised after v5 build feedback (Day view
-reintroduced, Admin restructured into a tabbed hub with its own password
-gate, scheduling-confirmation ticket, custom frameless window chrome)
+Date: September 3, 2026
+Status: Draft v7.0 - revised after v6 build feedback (per-date business-
+hours overrides replacing weekly-only editing, appointment search, an
+auto-fitting calendar that no longer needs a maximized window or
+scrolling, automatic no-show detection, and a restyled Admin/Billing/
+Client Detail UI)
 
 ================================================================
 
@@ -191,6 +193,21 @@ SQLite schema (v3):
   morning and evening blocks; a day with no rows is closed (see 7.1 for
   the actual hours).
 
+--- Table: business_hours_overrides ---
+  A per-date override of the recurring weekly schedule in business_hours
+  above - added so Admin can adjust hours for one specific date (a
+  shortened evening, a one-off early close) without touching every future
+  occurrence of that weekday. A date with no rows here simply uses its
+  normal weekday hours; a date overridden to be fully closed still gets
+  exactly one row, with start_time/end_time both NULL, so "closed" can be
+  told apart from "no override at all." See 7.1 and 7.4/8 (Edit Business
+  Hours).
+  id            INTEGER PK
+  date          TEXT      required, ISO date (YYYY-MM-DD)
+  start_time    TIME      nullable (NULL only in the single-row "fully
+                           closed" case above)
+  end_time      TIME      nullable (same)
+
 --- Table: settings ---
   key       TEXT PK   e.g. admin_password_hash
   value     TEXT
@@ -207,6 +224,15 @@ SQLite schema (v3):
   time grid, with a plain, always-readable list of that day's
   appointments (time, client, status) alongside it - useful once a day
   gets busy enough that week view's narrower columns get cramped.
+- Alongside Day/Week/Month, a "Today / Go to Date" toggle lets Admin jump
+  the calendar straight to any date via a popup calendar picker (Go to
+  Date), not just step forward/back or return to today - the current view
+  mode (day/week/month) is kept, only the anchor date moves. Whichever
+  side matches the calendar's current date is shown as active.
+- A "Search Appointment" button finds an appointment by client name/phone
+  and/or an exact date and jumps straight to it (opens Day view on that
+  date with the appointment's own dialog open), rather than requiring
+  Admin to scrub through the calendar to find one client's booking.
 - Clicking a day on the month grid jumps to the day view for that date.
   Past days are grayed out and their empty time is not clickable - you
   can't create a new appointment on a date that's already gone. Existing
@@ -216,16 +242,20 @@ SQLite schema (v3):
 - On today specifically, each business-hours time block grays out on its
   own once that block's end time has passed, rather than waiting for the
   whole day to end - e.g. a 10:30am-1:30pm block reads as done by 9pm
-  even though a 7:30-10:30pm block on the same day hasn't ended yet. This
-  only affects the visual cue and whether new bookings can be made in
-  that block; an appointment already sitting in a grayed block stays
+  even though a 7:30-10:30pm block on the same day hasn't ended yet.
+  Within a block that's still open, the already-elapsed portion of it
+  (from the block's start up to right now) grays out on its own too, in
+  Day/Week view's time grid, rather than the whole block staying
+  full-brightness right up until it ends - since that already-elapsed
+  time is just as unbookable as a fully-past block. This only affects the
+  visual cue and whether new bookings can be made in that block/time; an
+  appointment already sitting in a grayed block or grayed portion stays
   fully clickable, and Start/End Session (7.3) for a client on today's
   schedule remains available no matter what time it currently is.
 - Click an open time slot in the week or day view to create a new
-  appointment;
-  select an existing client, quick-add a new one inline, or attach more
-  than one client to the same slot (see "Multiple clients per
-  appointment" below).
+  appointment; select an existing client, quick-add a new one inline, or
+  attach more than one client to the same slot (see "Multiple clients
+  per appointment" below).
 - Appointment form fields: one or more clients, date/time, duration (or
   end time), appointment notes (optional), status (per client - see
   below). Price is calculated automatically per client (7.3), not typed
@@ -242,9 +272,14 @@ SQLite schema (v3):
     - The start time is never typed in. Clicking the start-time field
       opens a dropdown listing every start time, in 5-minute intervals,
       on the selected date where a booking is actually possible -
-      respecting business hours, existing appointments, and the gap rule
-      below - with the earliest one marked. Picking an entry displays it
-      in the field; that's the only way to set it.
+      respecting business hours (including any per-date override, see
+      below), existing appointments, and the gap rule below - with the
+      earliest one marked. Times are grouped under non-selectable
+      "Morning Appointments" / "Evening Appointments" headings, each
+      labeled with that block's actual hours for the selected date (e.g.
+      "Evening Appointments (7:30 PM - 10:30 PM)"), rather than shown as
+      one flat list. Picking an entry displays it in the field; that's
+      the only way to set it.
     - Duration is chosen from a list of valid options in 5-minute steps,
       starting at 15 minutes and going up to (business-hours block end
       time - appointment start time). The list automatically excludes any
@@ -283,6 +318,11 @@ SQLite schema (v3):
 - Successfully scheduling or rescheduling an appointment shows a brief
   confirmation "ticket" (client name(s), date, time, and notes) as a
   final on-screen recap before the form closes.
+- A client left "Scheduled" on an appointment whose business-hours block
+  has already ended, without their session ever having been started, is
+  automatically promoted to "No-Show" the next time appointment data is
+  displayed - Admin doesn't have to notice a missed appointment and flip
+  its status by hand.
 - Once any client on an appointment has actually started their session
   (or the appointment's start time has passed), its date/time/duration
   can no longer be changed - only status actions and adding/managing
@@ -297,6 +337,12 @@ SQLite schema (v3):
     Mon, Wed, Thu: 10:30 am - 1:30 pm and 7:30 pm - 10:30 pm
     Fri, Sat: closed (no appointments)
 
+  These are the recurring weekly hours. Admin can additionally override
+  the hours for one specific date (business_hours_overrides, see 6 and
+  7.4/8) - e.g. closing early on one particular evening - without
+  changing every other occurrence of that weekday; a date with no
+  override just uses the weekly schedule above.
+
   Scheduling rules (enforced by the app, not just suggested):
     - Appointment length must be at least 15 minutes, and at most the
       time remaining between the requested start time and the end of
@@ -307,7 +353,14 @@ SQLite schema (v3):
       of 1-14 minutes between the end of one appointment and the start
       of the next, since that space is too short for the 15-minute
       minimum appointment length to ever fill it. A gap is only valid
-      if it's 0 minutes (back-to-back) or 15+ minutes.
+      if it's 0 minutes (back-to-back) or 15+ minutes. This same rule
+      also applies against a business-hours block's own open/close time:
+      a start time that would leave a 1-14 minute idle gap right after
+      the block opens, or a duration that would leave one right before
+      the block closes, is likewise excluded from the start-time/
+      duration options offered - so this is enforced entirely by keeping
+      such choices out of those lists in the first place, never by
+      rejecting a choice after it's already been offered and picked.
     - Appointments cannot be booked inside a blocked time slot/day.
 
   Blocking time off:
@@ -372,6 +425,19 @@ SQLite schema (v3):
 7.4 Admin Access
 - The app requires the Admin password (Mom's password) to open/launch
   at all - it cannot be used without entering it first.
+- Edit Business Hours (in the Admin tab) edits one specific date at a
+  time, not a whole recurring weekday - picking a date loads its
+  currently-effective hours (an existing override for that date, or
+  otherwise that weekday's normal schedule as an editable starting
+  point), and Save records an override for that date only, leaving every
+  other date - including every other occurrence of that same weekday -
+  on the normal weekly schedule. "Reset to Default Hours" removes the
+  date's override entirely, reverting it back to that weekday's normal
+  hours. Saving is blocked, with a listing of the conflicting
+  appointment(s), if any of that one date's existing bookings would no
+  longer fit the proposed hours - they must be rescheduled or cancelled
+  first, same as before, just scoped to that single date instead of
+  scanning every future date for conflicts.
 - Once the app is open, no further password is needed for routine use:
   creating, rescheduling, or cancelling appointments; entering client
   info; and recording payments.
@@ -416,13 +482,18 @@ re-entering the Admin password to switch into (see 7.4).
 
 Screens:
 1. Appointments (Calendar/Dashboard) - Day / Week / Month toggle (week
-   view by default on launch - see 7.1), a "Schedule Appointment"
-   button, quick view of the current schedule, and the ability to block
-   off a specific slot directly on the calendar via right-click. Past
-   dates are grayed out and not clickable for new bookings, but existing
-   appointments on them stay clickable so Admin can view who was booked;
-   on today, each business-hours block grays out individually once it
-   has ended (see 7.1).
+   view by default on launch - see 7.1), a "Today / Go to Date" toggle
+   and a "Search Appointment" button for jumping to a date or a specific
+   client's booking, a "Schedule Appointment" button, quick view of the
+   current schedule, and the ability to block off a specific slot
+   directly on the calendar via right-click. Past dates are grayed out
+   and not clickable for new bookings, but existing appointments on them
+   stay clickable so Admin can view who was booked; on today, each
+   business-hours block - and the already-elapsed portion within a block
+   still open - grays out individually once it has ended/elapsed (see
+   7.1). The Day/Week time grid always shows the full business-hours
+   schedule without needing to scroll, scaling itself to fit whatever
+   height is actually available on screen.
 2. Clients - searchable list + detail panel (contact info, history,
    balance).
 	- Client panel should pop up during booking process; not be displayed
@@ -443,9 +514,18 @@ Screens:
 4. Admin - a segmented sub-tab strip (Edit Business Hours / Block Time
    Off / Billing) that opens on Edit Business Hours by default;
    switching between the three swaps the content in place rather than
-   opening separate dialogs or pages. Billing records payments, shows
-   client balances, and exports reports (see 7.3). Reaching this tab at
-   all requires the Admin password (see 7.4).
+   opening separate dialogs or pages. Edit Business Hours picks a date
+   and edits that date's hours only, with a "Reset to Default Hours"
+   option to drop back to its normal weekly schedule (see 7.4); Save/
+   Cancel on both Edit Business Hours and Block Time Off start disabled
+   and only become active once a field has actually been changed, so
+   there's nothing to accidentally save or discard before then. Billing
+   and Client Detail (opened from a Billing balance row) present their
+   content in rounded card panels rather than plain native-OS group
+   boxes, with balances/credits color-coded (red = owed, green = credit)
+   consistently in both places. Billing records payments, shows client
+   balances, and exports reports (see 7.3). Reaching this tab at all
+   requires the Admin password (see 7.4).
 
 General UX notes:
 - Should feel like a lightweight, single-purpose business tool - fast
@@ -462,19 +542,29 @@ General UX notes:
   custom-drawn title bar (drag to move, minimize/maximize/close, still
   resizable from the window's edges) instead of the operating system's
   native one, so their appearance doesn't depend on the OS's window
-  theme or accent color. The app launches maximized so its full layout
-  is visible right away without the user needing to resize the window.
+  theme or accent color. The app launches as a normal, centered window
+  sized around its content rather than maximized - the Day/Week
+  calendar grid scales its own layout to fit whatever height it's
+  actually given (see Screen 1 above), so there's no longer a reason to
+  force the window to cover the whole screen on launch, and the window
+  remains freely resizable afterward.
 - Clear visual distinction between appointment statuses (scheduled /
   in process / completed / cancelled / no-show) via color coding, both
   on the calendar and on each client's row within the appointment form.
+  Appointment text on the calendar is drawn at one fixed, consistently
+  legible size and truncated to fit a card's available space, rather
+  than being shrunk smaller to cram more text in; overlapping
+  appointments sharing a slot are sized so a short one is never
+  squeezed down to unreadable, borrowing room from its longer neighbors
+  as needed.
 - Blocked time should be visually distinct from booked appointments on
-  the calendar (e.g. a hatched/greyed-out block). Past dates use a
-  separate grayed-out treatment to signal "view only, not bookable" -
-  both on the month/week calendar and in the appointment form's date
-  picker.
-- Every form marks which fields are required ("*", with a legend) vs.
-  optional (stated once, in the field's label) - never left ambiguous,
-  and never stated as optional in two places at once.
+  the calendar (a plain bordered box exactly bounding the blocked span,
+  labeled with its reason). Past dates use a separate grayed-out
+  treatment to signal "view only, not bookable" - both on the month/
+  week calendar and in the appointment form's date picker.
+- Every form marks which fields are required ("*", shown in red, with a
+  legend) vs. optional (stated once, in the field's label) - never left
+  ambiguous, and never stated as optional in two places at once.
 
 ================================================================
 
@@ -574,7 +664,7 @@ Phase 5 - Scheduling UX Refinements & Session Safeguards
 - Unhandled errors are now caught, logged, and shown in a dialog instead
   of failing silently (see Non-Functional Requirements)
 
-Phase 6 - Day View, Admin Hub & Window Chrome (this revision)
+Phase 6 - Day View, Admin Hub & Window Chrome
 - Reintroduced a Day view (Day / Week / Month toggle) - a single day's
   business-hours blocks as a wide time grid, alongside a plain, always-
   readable list of that day's appointments (time, client, status);
@@ -619,6 +709,74 @@ Phase 6 - Day View, Admin Hub & Window Chrome (this revision)
 - Fixed: an editable client-picker dropdown (e.g. "+ Add Client",
   Record Payment's client field) could flash open and immediately close
   again on click instead of staying open to choose from
+
+Phase 7 - Per-Date Hours, Search, Auto-Fit Calendar & UI Polish (this
+revision)
+- Edit Business Hours reworked to override one specific date at a time
+  (business_hours_overrides, see 6) instead of only ever editing a whole
+  recurring weekday - picking a date shows its currently-effective hours
+  (an override if one exists, else that weekday's normal schedule) as an
+  editable starting point, Save records an override for that date only,
+  and "Reset to Default Hours" removes the override to revert to the
+  normal weekly schedule. Conflict-checking against existing appointments
+  is now scoped to just the one date being edited, not a year-long scan.
+  Save/Cancel here, and on Block Time Off, start disabled and only
+  activate once a field is actually changed, so there's nothing to
+  accidentally save or discard before any real edit is made.
+- The 1-14 minute unbookable-gap rule (7.1) now also applies against a
+  business-hours block's own open/close time, not only against
+  neighboring appointments - so a start time or duration that would
+  leave that kind of dead time right after opening or right before
+  closing is excluded from the offered options the same way one next to
+  another appointment already was.
+- A client left "Scheduled" past their appointment's end time, without
+  ever having been started, is now automatically promoted to "No-Show"
+  whenever appointment data is displayed, instead of relying on Admin to
+  notice and change it by hand.
+- New "Search Appointment" button: find an appointment by client name/
+  phone and/or an exact date, then jump straight to it (opens Day view
+  on that date with the appointment already open).
+- New "Go to Date" toggle next to "Today": opens a calendar popup to jump
+  the calendar straight to any date, in whatever view mode is currently
+  active, rather than only stepping forward/back or returning to today.
+- The app no longer launches maximized - it opens as a normal, centered
+  window sized around its content and remains freely resizable. The Day/
+  Week time grid now scales its own vertical scale to whatever height is
+  actually available, so the full business-hours schedule for the
+  visible day(s) always fits without ever needing to scroll, at any
+  window size.
+- Appointment/blocked-time text on the calendar is now drawn at one
+  fixed, consistently legible size and truncated to fit rather than
+  shrinking smaller to cram more in; the format is simplified to a
+  single "Name: time" line (Day view's wider column shows the full
+  start-end range, Week view's narrower columns show just the start
+  time). Overlapping appointments sharing a slot now get proportionally-
+  sized heights with a readable minimum, so a short appointment
+  sandwiched between long ones borrows room from its neighbors instead
+  of rendering squeezed unreadably thin.
+- Blocked time on the calendar is now shown as a plain bordered box
+  exactly around the blocked span (labeled with its reason) instead of
+  the previous diagonal-hatch pattern, which read as visually messy.
+- The start-time dropdown now groups its options under non-selectable
+  "Morning Appointments" / "Evening Appointments" headings, each labeled
+  with that block's actual hours for the selected date (reflecting any
+  per-date override), instead of one flat list of times.
+- Required-field asterisks are now shown in red (both on form labels and
+  the "* Required" legend), instead of plain text, for a clearer at-a-
+  glance cue.
+- Billing and Client Detail are restyled to match, using rounded white
+  card panels in place of plain native-OS group boxes; balances/credits
+  are consistently color-coded (red = owed, green = credit) in both
+  places, and history tables auto-size each column to its content with
+  one column (typically Notes) absorbing the remaining width, instead of
+  stretching every column evenly.
+- Edit Business Hours and Block Time Off now use larger text/controls
+  than the rest of the app, since Admin is most likely to be reading
+  these forms on a small front-desk screen.
+- Clicking a date on the month grid now shows an immediate pressed
+  highlight on that cell while the switch to Day view completes a
+  moment later, so the jump from a whole month to a single day feels
+  less abrupt without the click ever reading as unresponsive.
 
 ================================================================
 

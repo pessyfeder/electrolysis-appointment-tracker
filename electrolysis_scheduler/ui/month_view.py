@@ -36,7 +36,14 @@ class MonthGridWidget(QWidget):
         self.appts_by_day = {}
         self.blocked_days = set()
         self._hover_idx = None
-        self.setMinimumHeight(520)
+        self._pressed_idx = None
+        # A floor to keep day cells from becoming unreadably squashed, not a
+        # size the grid insists on - _cell_rect() already lays cells out
+        # from self.height() directly, so it's fine with less. Kept modest
+        # (rather than the ~520px a maximized window comfortably fit) so a
+        # normal, non-maximized window height doesn't force this grid taller
+        # than the space actually available and get its bottom rows cut off.
+        self.setMinimumHeight(280)
         self.setMouseTracking(True)
 
     def set_month(self, year, month):
@@ -73,6 +80,7 @@ class MonthGridWidget(QWidget):
                 d += timedelta(days=1)
 
         self._hover_idx = None
+        self._pressed_idx = None
         self.update()
 
     def _rows(self):
@@ -119,6 +127,7 @@ class MonthGridWidget(QWidget):
             # Past days aren't clickable for new bookings, so they're never
             # given the hover highlight that signals "you can click this".
             is_hover = idx == self._hover_idx and in_month and not is_past
+            is_pressed = idx == self._pressed_idx
 
             bg = QColor("#ffffff") if in_month else QColor("#f8fafc")
             if is_past and in_month:
@@ -128,6 +137,13 @@ class MonthGridWidget(QWidget):
                 bg = QColor("#eef1f6")
             if is_hover:
                 bg = QColor("#eff6ff")
+            if is_pressed:
+                # A stronger, more saturated fill than the hover tint - the
+                # switch to Day view is deliberately delayed a beat (see
+                # CalendarView._on_month_day_clicked), so this needs to read
+                # as "your click registered, hang on" for that whole pause
+                # rather than the page just sitting there looking unclicked.
+                bg = QColor("#bfdbfe")
             p.fillRect(rect, bg)
 
             if d in self.blocked_days:
@@ -216,4 +232,9 @@ class MonthGridWidget(QWidget):
         pos = event.position() if hasattr(event, "position") else event.localPos()
         idx = self._idx_at(pos)
         if idx is not None:
+            # Visible immediately, even though CalendarView waits a beat
+            # before actually switching to Day view - otherwise the click
+            # would appear to do nothing at all for that entire pause.
+            self._pressed_idx = idx
+            self.update()
             self.day_clicked.emit(self.cells[idx])

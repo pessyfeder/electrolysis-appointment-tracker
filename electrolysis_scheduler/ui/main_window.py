@@ -13,7 +13,17 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Electrolysis Scheduler")
         self.resize(1200, 800)
-        self.setMinimumSize(900, 600)
+        # Width is deliberately NOT constrained to a hardcoded number here -
+        # the toolbar's buttons (Day/Week/Month, Today/Go to Date, Search,
+        # Schedule Appointment, ...) have real text that must never be
+        # allowed to shrink below what it needs to render un-clipped, and a
+        # guessed pixel floor drifts out of sync with that content (it did:
+        # 900 used to be comfortably wide enough, then the toolbar grew a
+        # second segmented control and longer button labels and 900 started
+        # clipping text). Only a height floor is set explicitly; the width
+        # floor is left for Qt to derive from the actual layout, which is
+        # always exactly as wide as the current content needs.
+        self.setMinimumHeight(600)
 
         # Frameless: the native title bar/border is replaced below with a
         # custom one, so this window looks and behaves consistently instead
@@ -35,7 +45,9 @@ class MainWindow(QMainWindow):
         outer.addWidget(self.title_bar)
 
         self.tabs = QTabWidget()
-        self.calendar_view = CalendarView(self, require_admin=self.require_admin)
+        self.calendar_view = CalendarView(
+            self, require_admin=self.require_admin, require_session_admin=self.require_session_admin,
+        )
         self.billing_view = BillingView(self, require_admin=self.require_admin)
         self.admin_view = AdminView(
             self, billing_view=self.billing_view, on_calendar_changed=self.calendar_view.refresh,
@@ -88,7 +100,21 @@ class MainWindow(QMainWindow):
             self._resize_grips.set_active(not self.isMaximized())
 
     def require_admin(self) -> bool:
+        # Every admin-gated action (the Admin tab, editing business hours,
+        # blocking time, cancelling, archiving a client, starting/ending a
+        # session, ...) re-prompts for the password every time, even though
+        # the app is already gated by the one-time login at startup - that
+        # login just proves someone with the password opened the app; it
+        # doesn't prove the person currently at an unlocked, unattended
+        # front-desk computer is that same person.
         return prompt_admin_reauth(self)
+
+    # Kept as its own name (rather than inlining self.require_admin at each
+    # call site) so AppointmentDialog's Start/End Session buttons - the
+    # actions this re-auth matters most for, since they begin/lock in
+    # billing - have a gate that reads its own intent, even though today it
+    # happens to check the exact same thing as every other admin action.
+    require_session_admin = require_admin
 
     def eventFilter(self, obj, event):
         if obj is self.tabs.tabBar() and event.type() == QEvent.MouseButtonPress:

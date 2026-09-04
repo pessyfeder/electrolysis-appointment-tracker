@@ -2,63 +2,84 @@
 
 A local, offline desktop app for scheduling appointments, tracking clients,
 and recording payments for a solo electrolysis practice. Built per
-`electrolysis_scheduler_spec.txt` (Draft v4.0): Python 3.13 + PySide6 (Qt) +
-SQLite, packaged as a standalone Windows `.exe` with PyInstaller. No cloud,
-no network calls, no email/SMS.
+`electrolysis-scheduler-spec.txt` (one folder up; Draft v7.0): Python 3.13 +
+PySide6 (Qt) + SQLite, packaged as a standalone Windows `.exe` with
+PyInstaller. No cloud, no network calls, no email/SMS.
 
 ## What's included
 
-- Admin password gate to open the app at all (bcrypt-hashed, never stored in plaintext)
-- Week / Month calendar (no separate day view). Week shows only the actual
-  open-for-business windows as self-contained cards (e.g. a separate morning
-  card and evening card) — closed time isn't rendered at all — with
-  blocked-time (hatched) blocks and status color coding within each card
-- Past dates are grayed out and locked from new bookings on both the month
-  and week views; existing appointments already booked on a past day stay
-  clickable so Admin can still view who was booked
+- Admin password gate to open the app at all (bcrypt-hashed, never stored in
+  plaintext); every other admin-gated action (Admin tab, blocking time,
+  editing business hours, starting/ending a session) re-prompts for it again
+- Day / Week / Month calendar, plus a "Today / Go to Date" toggle and a
+  Search Appointment button (find a booking by client name/phone and/or an
+  exact date, then jump straight to it). Day/Week show only the actual
+  open-for-business windows as self-contained cards, with status color
+  coding and a plain bordered box (not a hatch pattern) for blocked time.
+  The grid auto-scales its own vertical scale so the full day always fits
+  on screen without scrolling, at any window size — the app no longer
+  launches maximized, just as a normal, resizable, centered window
+- Past dates are grayed out and locked from new bookings on the month, week,
+  and day views; today's already-elapsed time grays out incrementally too.
+  Existing appointments already booked on a past day stay clickable so
+  Admin can still view who was booked
 - A "Next Available Appointment" label on the Appointments tab, always kept
   up to date; click it to jump to and flash that slot
-- Business-hour + 15-minute-minimum + 1–14-minute unbookable-gap enforcement
+- Business-hour + 15-minute-minimum + 1–14-minute unbookable-gap
+  enforcement, including against a business-hours block's own open/close
+  time, not just neighboring appointments
+- Business hours can be overridden for one specific date (e.g. closing
+  early one evening) without changing every other occurrence of that
+  weekday, via Admin → Edit Business Hours; "Reset to Default Hours"
+  reverts a date back to its normal weekly schedule
+- A client left "Scheduled" past their appointment's end time without ever
+  being started is automatically promoted to "No-Show"
 - Appointments can have more than one client on the same slot, each billed
   independently and sequentially (Start/End Session per client, with an
   auto-suggested "start the next client" prompt when one finishes)
-- Appointment form: click-to-suggest earliest start time, a pre-validated
-  duration dropdown, and a date picker that blocks past dates for new
-  appointments
+- Appointment form: click-only start-time dropdown grouped under Morning/
+  Evening headings, a pre-validated duration dropdown, and a date picker
+  that blocks past dates for new appointments
 - Client quick-add/light-edit popup during booking — last name required,
   first name optional, phone required and auto-formatted as
   `(XXX) XXX-XXXX`, no notes field
 - Start/End session timing → auto-calculated price ($2.50/min) on completion,
   per client
-- Payments, running client balance (credit/debt), CSV export by date range
+- Payments, running client balance (credit/debt) color-coded red/green,
+  CSV export by date range — Billing and Client Detail use a common
+  rounded-card look rather than plain native-OS group boxes
 - Admin-password-gated client detail view (balance, full appointment/payment
   history, archive) reachable by double-clicking a client in the Billing tab
-- Second admin-password gate specifically for editing business hours,
-  blocking/unblocking time, or viewing client details (spec 7.4)
+- Billing lives inside the Admin tab (a segmented Edit Business Hours /
+  Block Time Off / Billing strip), gated by the Admin password to switch
+  into (spec 7.4)
 - Local-only SQLite database in `%APPDATA%\ElectrolysisScheduler\scheduler.db`
 
 ## Project layout
 
 ```
-main.py                   Entry point (password gate -> main window)
+main.py                   Entry point (password gate -> main window, centered on launch)
 app/
-  db.py                    Schema (appointments + appointment_clients join table) + migration + connection
-  models.py                CRUD for clients/appointments/appointment_clients/payments/blocked_times/business_hours
+  db.py                    Schema (appointments + appointment_clients join table, business_hours_overrides) + migration + connection
+  models.py                CRUD for clients/appointments/appointment_clients/payments/blocked_times/business_hours(+overrides); appointment search; auto no-show promotion
   auth.py                  bcrypt password hashing/verification
-  scheduling.py            Business-hours + gap + conflict validation, duration options, start-time suggestion
+  scheduling.py            Business-hours (incl. per-date overrides) + gap + conflict validation, duration options, start-time suggestion
   billing.py                Price calculation, CSV export
   paths.py, util.py         App-data directory, phone/name formatting helpers
 ui/
   login_dialog.py           Password gate (first-run setup + unlock)
-  main_window.py             Tabs (Appointments / Billing) + Admin menu
-  calendar_view.py            Week grid of business-hours cards, toolbar, navigation, past-day graying
-  month_view.py                Month grid, past days grayed, every day routes to week view
-  appointment_dialog.py        Book/edit; multiple clients per slot, each with independent Start/End-session/cancel/no-show
+  main_window.py             Tabs (Appointments / Admin) + admin re-auth
+  calendar_view.py            Day/Week grid (auto-fit scale, no scrolling), Month, toolbar, Search/Go-to-Date, navigation, past/elapsed-time graying
+  month_view.py                Month grid, past days grayed, every day routes to day view
+  search_dialog.py              Find an appointment by client name/phone and/or date, jump to it
+  appointment_dialog.py        Book/edit; multiple clients per slot, each with independent Start/End-session/cancel/no-show; grouped start-time dropdown
   client_dialog.py              Quick-add/light-edit popup (last name + phone required, first name optional) used during booking
-  client_detail_dialog.py        Admin-gated balance + full history + archive (opened from Billing)
-  billing_view.py                 Record payments, balances, CSV export, client detail launcher
-  block_time_dialog.py             Block a slot/day off (reason required)
-  business_hours_dialog.py          Edit weekly business hours (Phase 3, admin-gated)
+  client_detail_dialog.py        Admin-gated balance + full history + archive (opened from Billing), card-styled
+  billing_view.py                 Record payments, balances, CSV export, client detail launcher, card-styled
+  block_time_dialog.py             Block a slot/day off (reason required); Save/Cancel enabled only once edited
+  business_hours_dialog.py          Edit hours for one specific date, with per-date override + reset (admin-gated)
+  admin_view.py                     Segmented Edit Business Hours / Block Time Off / Billing hub
+  widgets.py                        Shared widgets/helpers: click-to-open date picker, required-field styling, card panels, history-table styling
 ```
 
 ## Running it
@@ -127,11 +148,17 @@ The next launch will treat it as first-run and prompt to set a new password.
 
 ## Notes / things to know
 
-- Business hours default to the table in spec section 7.1 and can be edited
-  from the **Admin → Edit Business Hours…** menu (requires the admin
-  password again, per spec 7.4).
+- Business hours default to the weekly table in spec section 7.1. The
+  **Admin tab → Edit Business Hours** sub-tab edits one specific date at a
+  time (an override), not the recurring weekly schedule — pick a date,
+  edit its hours, and Save; "Reset to Default Hours" removes the override
+  and reverts that date to its normal weekday hours. Reaching the Admin
+  tab at all requires the admin password again, per spec 7.4.
 - Right-click an empty slot on the calendar to block that time off; left-click
-  an existing blocked (hatched) block to remove it — both require the admin
-  password.
+  an existing blocked block (a plain bordered box labeled with its reason)
+  to remove it — both require the admin password.
+- A client left "Scheduled" past their appointment's end time without ever
+  being started is auto-promoted to "No-Show" the next time the schedule is
+  displayed — no manual cleanup needed.
 - Appointments are never hard-deleted; cancel or mark no-show instead, so
   history stays intact for billing/reporting.

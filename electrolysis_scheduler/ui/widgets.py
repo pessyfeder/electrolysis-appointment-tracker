@@ -1,10 +1,97 @@
-from PySide6.QtWidgets import QDateEdit, QAbstractSpinBox, QCalendarWidget, QDoubleSpinBox
-from PySide6.QtCore import Qt, QEvent, QPoint, QDate, QObject, QTimer
+from PySide6.QtWidgets import (
+    QDateEdit, QAbstractSpinBox, QCalendarWidget, QDoubleSpinBox, QLabel,
+    QFrame, QVBoxLayout, QTableWidget, QHeaderView
+)
+from PySide6.QtCore import Qt, QEvent, QPoint, QDate, QObject
 from PySide6.QtGui import QTextCharFormat, QColor
 
 _DISABLED_DATE_FORMAT = QTextCharFormat()
 _DISABLED_DATE_FORMAT.setForeground(QColor("#cbd5e1"))
 _ENABLED_DATE_FORMAT = QTextCharFormat()
+
+REQUIRED_COLOR = "#dc2626"
+
+
+def required_label(text):
+    """A QFormLayout row label like 'Date: *' with the asterisk in red,
+    so a required field reads as required at a glance rather than blending
+    into the rest of the label."""
+    lbl = QLabel(f'{text} <span style="color:{REQUIRED_COLOR};">*</span>')
+    lbl.setTextFormat(Qt.RichText)
+    return lbl
+
+
+def required_hint_label():
+    """The '* Required' legend shown near a form's required fields, in the
+    same red as required_label()'s asterisks."""
+    lbl = QLabel("* Required")
+    lbl.setStyleSheet(f"color: {REQUIRED_COLOR}; font-size: 11px;")
+    return lbl
+
+
+# Scoped (via apply_large_form_style below), not a global theme.py change -
+# Edit Business Hours and Block Time Off are the two forms an admin is most
+# likely to be squinting at on a small/low-res screen (a front-desk tablet
+# or laptop), so their text and controls run noticeably larger than the
+# rest of the app's normal 10pt baseline instead of everywhere at once.
+LARGE_FORM_FONT_PT = 13
+
+
+def apply_large_form_style(widget):
+    """Bumps font size and control padding for `widget` and everything
+    inside it - a plain instance-level setStyleSheet, so it never leaks to
+    a QMessageBox or other separately-parented top-level window it spawns,
+    only to its own descendants."""
+    widget.setStyleSheet(f"""
+        QLabel {{ font-size: {LARGE_FORM_FONT_PT}pt; }}
+        QPushButton {{ font-size: {LARGE_FORM_FONT_PT}pt; padding: 10px 20px; }}
+        QTimeEdit, QDateEdit, QTextEdit, QCheckBox {{
+            font-size: {LARGE_FORM_FONT_PT}pt;
+        }}
+        QTimeEdit, QDateEdit {{ padding: 8px 10px; }}
+        QCheckBox::indicator {{ width: 22px; height: 22px; }}
+    """)
+
+
+def make_card(title):
+    """A rounded white card with a bold heading, used throughout the Admin
+    and Billing tabs in place of a plain QGroupBox - keeps the whole app
+    reading as one consistent style rather than switching to native-Qt
+    chrome for one particular window. Returns (card_frame, content_layout);
+    add the rest of the card's widgets to content_layout."""
+    card = QFrame()
+    card.setObjectName("appCard")
+    card.setStyleSheet(
+        "#appCard { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }"
+    )
+    layout = QVBoxLayout(card)
+    layout.setContentsMargins(18, 16, 18, 18)
+    layout.setSpacing(12)
+    title_label = QLabel(title)
+    title_label.setStyleSheet("font-weight: 700; font-size: 13pt; color: #1e293b;")
+    layout.addWidget(title_label)
+    return card, layout
+
+
+def style_history_table(table, stretch_column):
+    """Common read-only history-table look (Billing's client balances,
+    Client Detail's appointment/payment history, ...): alternating rows,
+    no row-number gutter, whole-row selection, and every column sized to
+    its own content except `stretch_column` (typically Notes - the one
+    field with genuinely unpredictable length) which absorbs the rest of
+    the width. Without this, QHeaderView.Stretch alone divides width
+    evenly regardless of content, so a long fixed-format column (e.g. a
+    date/time) gets squeezed and clipped while a usually-empty one (e.g.
+    Notes) sits on wasted space."""
+    table.setEditTriggers(QTableWidget.NoEditTriggers)
+    table.verticalHeader().setVisible(False)
+    table.setSelectionBehavior(QTableWidget.SelectRows)
+    table.setAlternatingRowColors(True)
+    header = table.horizontalHeader()
+    for col in range(table.columnCount()):
+        header.setSectionResizeMode(
+            QHeaderView.Stretch if col == stretch_column else QHeaderView.ResizeToContents
+        )
 
 
 class _ShowPopupOnClick(QObject):
@@ -16,24 +103,32 @@ class _ShowPopupOnClick(QObject):
     def __init__(self, combo):
         super().__init__(combo)
         self._combo = combo
+        self._press_seen = False
 
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.MouseButtonPress and not self._combo.view().isVisible():
+        et = event.type()
+        if et == QEvent.MouseButtonPress:
+            # Only the press half of a click that starts while the popup
+            # is closed counts - remembered so the popup only opens once
+            # the *same* click's release has also gone by (see below).
+            self._press_seen = not self._combo.view().isVisible()
+        elif et == QEvent.MouseButtonRelease and self._press_seen:
+            self._press_seen = False
             # Calling showPopup() synchronously from inside this same
             # click's mousePressEvent opens the popup, but then that same
-            # click's mouseReleaseEvent (landing on the line edit, not
-            # inside the freshly-opened popup) is read as an "outside"
-            # click and immediately closes it again - the popup flashes
-            # and disappears instead of staying open. Deferring the call
-            # to the next event-loop tick lets this click finish being
-            # processed first, so the popup opens cleanly afterward and
-            # stays open.
-            QTimer.singleShot(0, self._show_popup_safely)
+            # click's still-upcoming mouseReleaseEvent (landing on the
+            # line edit, not inside the freshly-opened popup) is read as
+            # an "outside" click and immediately closes it again - the
+            # popup flashes and disappears instead of staying open.
+            # Opening it here instead, on the release, means this click's
+            # own press+release is already fully done by the time the
+            # popup exists, so there's no leftover event from it left to
+            # dismiss anything. No extra artificial delay is needed - an
+            # earlier version added one and it just made the popup feel
+            # sluggish/forced instead of a normal, immediate open.
+            if not self._combo.view().isVisible():
+                self._combo.showPopup()
         return False
-
-    def _show_popup_safely(self):
-        if not self._combo.view().isVisible():
-            self._combo.showPopup()
 
 
 def open_dropdown_on_click(combo):

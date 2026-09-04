@@ -62,6 +62,19 @@ CREATE TABLE IF NOT EXISTS business_hours (
     end_time TEXT NOT NULL
 );
 
+-- A per-date override of business_hours' recurring weekly schedule (see
+-- BusinessHoursEditor) - every date without an override here just keeps
+-- using its normal weekday hours. One row per open time block on that
+-- date; a date overridden to be fully closed instead gets exactly one row
+-- with start_time/end_time both NULL, so "closed" (present, zero open
+-- blocks) can be told apart from "no override at all" (no rows).
+CREATE TABLE IF NOT EXISTS business_hours_overrides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    start_time TEXT,
+    end_time TEXT
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -72,6 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_appt_clients_appt ON appointment_clients(appointm
 CREATE INDEX IF NOT EXISTS idx_appt_clients_client ON appointment_clients(client_id);
 CREATE INDEX IF NOT EXISTS idx_payment_client ON payments(client_id);
 CREATE INDEX IF NOT EXISTS idx_blocked_start ON blocked_times(start_datetime);
+CREATE INDEX IF NOT EXISTS idx_hours_override_date ON business_hours_overrides(date);
 """
 
 # (day_of_week, start_time "HH:MM", end_time "HH:MM")

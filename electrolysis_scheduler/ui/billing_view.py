@@ -2,15 +2,19 @@ from datetime import datetime, timedelta
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QComboBox,
-    QTextEdit, QPushButton, QLabel, QTableWidget, QTableWidgetItem, QGroupBox,
-    QFileDialog, QMessageBox, QHeaderView, QCompleter
+    QTextEdit, QPushButton, QLabel, QTableWidget, QTableWidgetItem,
+    QFileDialog, QMessageBox, QCompleter
 )
 from PySide6.QtCore import QDate, Qt
+from PySide6.QtGui import QColor
 
 from app import models, billing
 from app.util import format_client_name
 from ui.client_detail_dialog import ClientDetailDialog
-from ui.widgets import ClickToOpenDateEdit, TypeOnlyDoubleSpinBox
+from ui.widgets import (
+    ClickToOpenDateEdit, TypeOnlyDoubleSpinBox, open_dropdown_on_click,
+    required_label, required_hint_label, make_card, style_history_table
+)
 
 METHODS = ["cash", "card", "check", "other"]
 
@@ -20,11 +24,13 @@ class BillingView(QWidget):
         super().__init__(parent)
         self.require_admin = require_admin or (lambda: True)
         root = QHBoxLayout(self)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(14)
 
         # --- Left: record a payment ---
-        left = QGroupBox("Record a Payment")
-        left_layout = QVBoxLayout(left)
+        left, left_layout = make_card("Record a Payment")
         form = QFormLayout()
+        form.setSpacing(10)
 
         self.client_combo = QComboBox()
         self.client_combo.setEditable(True)
@@ -34,8 +40,9 @@ class BillingView(QWidget):
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         completer.setFilterMode(Qt.MatchContains)
         self.client_combo.setCompleter(completer)
+        open_dropdown_on_click(self.client_combo)
         self.client_combo.currentIndexChanged.connect(self._refresh_balance_preview)
-        form.addRow("Client: *", self.client_combo)
+        form.addRow(required_label("Client:"), self.client_combo)
 
         self.balance_preview = QLabel("")
         form.addRow("Current balance:", self.balance_preview)
@@ -44,11 +51,11 @@ class BillingView(QWidget):
         self.amount_spin.setRange(0, 100000)
         self.amount_spin.setPrefix("$")
         self.amount_spin.setDecimals(2)
-        form.addRow("Amount: *", self.amount_spin)
+        form.addRow(required_label("Amount:"), self.amount_spin)
 
         self.method_combo = QComboBox()
         self.method_combo.addItems(METHODS)
-        form.addRow("Method: *", self.method_combo)
+        form.addRow(required_label("Method:"), self.method_combo)
 
         self.notes_edit = QTextEdit()
         self.notes_edit.setFixedHeight(60)
@@ -56,11 +63,10 @@ class BillingView(QWidget):
 
         left_layout.addLayout(form)
 
-        required_hint = QLabel("* Required")
-        required_hint.setStyleSheet("color: #64748b; font-size: 11px;")
-        left_layout.addWidget(required_hint)
+        left_layout.addWidget(required_hint_label())
 
         record_btn = QPushButton("Record Payment")
+        record_btn.setObjectName("primaryButton")
         record_btn.setDefault(True)
         record_btn.clicked.connect(self._record_payment)
         left_layout.addWidget(record_btn)
@@ -70,22 +76,23 @@ class BillingView(QWidget):
 
         # --- Right: balances + export ---
         right = QVBoxLayout()
+        right.setSpacing(14)
 
-        balances_box = QGroupBox("Client Balances")
-        balances_layout = QVBoxLayout(balances_box)
-        balances_hint = QLabel("Double-click a client for balance, full history, and archive (admin password required).")
+        balances_box, balances_layout = make_card("Client Balances")
+        balances_hint = QLabel(
+            "Double-click a client for balance, full history, and archive (admin password required)."
+        )
         balances_hint.setWordWrap(True)
+        balances_hint.setStyleSheet("color: #64748b;")
         balances_layout.addWidget(balances_hint)
         self.balances_table = QTableWidget(0, 2)
         self.balances_table.setHorizontalHeaderLabels(["Client", "Balance"])
-        self.balances_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.balances_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        style_history_table(self.balances_table, stretch_column=0)
         self.balances_table.itemDoubleClicked.connect(self._open_client_detail)
         balances_layout.addWidget(self.balances_table)
         right.addWidget(balances_box, 2)
 
-        export_box = QGroupBox("Export Payments (CSV)")
-        export_layout = QVBoxLayout(export_box)
+        export_box, export_layout = make_card("Export Payments (CSV)")
         range_row = QHBoxLayout()
         self.start_date_edit = ClickToOpenDateEdit()
         self.start_date_edit.setDate(QDate.currentDate().addMonths(-1))
@@ -115,18 +122,23 @@ class BillingView(QWidget):
         self._refresh_balance_preview()
         self._refresh_balances_table()
 
+    @staticmethod
+    def _balance_text_and_color(balance):
+        if balance > 0:
+            return f"Owes ${balance:.2f}", "#b91c1c"
+        if balance < 0:
+            return f"${-balance:.2f} credit", "#15803d"
+        return "$0.00", "#64748b"
+
     def _refresh_balance_preview(self):
         client_id = self._selected_client_id()
         if not client_id:
             self.balance_preview.setText("")
+            self.balance_preview.setStyleSheet("")
             return
-        balance = models.client_balance(client_id)
-        if balance > 0:
-            self.balance_preview.setText(f"Owes ${balance:.2f}")
-        elif balance < 0:
-            self.balance_preview.setText(f"${-balance:.2f} credit")
-        else:
-            self.balance_preview.setText("$0.00")
+        text, color = self._balance_text_and_color(models.client_balance(client_id))
+        self.balance_preview.setText(text)
+        self.balance_preview.setStyleSheet(f"color: {color}; font-weight: 600;")
 
     def _refresh_balances_table(self):
         clients = models.list_clients()
@@ -136,7 +148,12 @@ class BillingView(QWidget):
             name_item = QTableWidgetItem(format_client_name(c["first_name"], c["last_name"]))
             name_item.setData(Qt.UserRole, c["id"])
             self.balances_table.setItem(row, 0, name_item)
-            item = QTableWidgetItem(f"${balance:.2f}" if balance >= 0 else f"(${-balance:.2f} credit)")
+            text, color = self._balance_text_and_color(balance)
+            item = QTableWidgetItem(text.replace("Owes ", ""))
+            item.setForeground(QColor(color))
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
             self.balances_table.setItem(row, 1, item)
 
     def _open_client_detail(self, item):

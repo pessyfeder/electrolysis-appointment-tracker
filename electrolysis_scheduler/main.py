@@ -9,6 +9,7 @@ import traceback
 # from where) main.py is launched.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.db import init_db
@@ -59,7 +60,26 @@ def main():
         sys.exit(0)
 
     window = MainWindow()
-    window.showMaximized()
+    # A normal, centered window rather than showMaximized() - it fits the
+    # calendar grid to whatever size that ends up being either way (see
+    # TimeGridWidget._relayout()), so there's no reason to force the app to
+    # cover the whole screen on launch.
+    #
+    # Centering is deferred to right after show() rather than computed from
+    # window.width() beforehand: MainWindow's actual minimum width is
+    # derived from its toolbar's real layout (see MainWindow.__init__), not
+    # a hardcoded number, and that isn't settled until the window has
+    # actually been laid out - reading window.width() any earlier risks
+    # centering against a stale, too-small size.
+    def _center_on_screen():
+        screen_geo = app.primaryScreen().availableGeometry()
+        window.move(
+            screen_geo.x() + max(0, (screen_geo.width() - window.width()) // 2),
+            screen_geo.y() + max(0, (screen_geo.height() - window.height()) // 2),
+        )
+
+    window.show()
+    QTimer.singleShot(0, _center_on_screen)
     sys.exit(app.exec())
 
 
