@@ -385,7 +385,17 @@ class TimeGridWidget(QWidget):
                         rel_offset = (s - c_start).total_seconds() / 60
                         rel_dur = (e - s).total_seconds() / 60
                         y = y_cursor + (rel_offset / span_min) * h_flexed
-                        h = max(6.0, (rel_dur / span_min) * h_flexed)
+                        if len(self.columns) == 1:
+                            h = max(6.0, (rel_dur / span_min) * h_flexed)
+                        else:
+                            # Week view: a chip is a small marker at the
+                            # appointment's start time, not a bar spanning
+                            # its whole duration - stretching it long just
+                            # ate space a short appointment doesn't need, so
+                            # every chip here is only as tall as its text
+                            # requires, regardless of how long the
+                            # appointment actually runs.
+                            h = min(self._min_chip_height(), h_flexed)
                         rect = QRectF(x + 1, y + 1, cell_w - 2, h - 2)
                         self._appt_layout.append((rect, a))
                     y_cursor += h_flexed
@@ -618,15 +628,8 @@ class TimeGridWidget(QWidget):
             p.drawRoundedRect(rect, 6, 6)
             p.setPen(QPen(text_color))
             s = datetime.fromisoformat(a["start_datetime"])
-            # Day view has a full-width column to itself, so the chip can
-            # afford to spell out the whole start-end range instead of just
-            # the start time - week view's 7-way-split columns stay with
-            # just the start, where a full range would crowd out the name.
-            if len(self.columns) == 1:
-                e = datetime.fromisoformat(a["end_datetime"])
-                when = f"{format_12h(s)} – {format_12h(e)}"
-            else:
-                when = format_12h(s)
+            e = datetime.fromisoformat(a["end_datetime"])
+            when = f"{format_12h(s)} – {format_12h(e)}"
             # "Name: time" on one line rather than two - saves enough
             # vertical room per chip that more appointments fit without
             # needing to shrink _min_chip_height()'s floor, or scroll (this
@@ -818,6 +821,7 @@ class CalendarView(QWidget):
         outer.addWidget(toolbar_card)
 
         self.next_available_label = ClickableLabel("")
+        self.next_available_label.setAlignment(Qt.AlignCenter)
         self.next_available_label.setCursor(Qt.PointingHandCursor)
         self.next_available_label.setStyleSheet(
             "background: #eff6ff; color: #1d4ed8; font-weight: 600; "

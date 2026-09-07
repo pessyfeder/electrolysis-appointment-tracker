@@ -114,6 +114,16 @@ def get_connection() -> sqlite3.Connection:
     return _connection
 
 
+def close_connection():
+    """Used by app.backup.restore_database() to release the lock on the
+    live database file before it's overwritten - get_connection() opens a
+    fresh one again the next time anything needs it."""
+    global _connection
+    if _connection is not None:
+        _connection.close()
+        _connection = None
+
+
 def _migrate_to_multi_client_appointments(conn):
     """Older DBs have a single client_id/status/price/session_started_at
     directly on appointments. Move that data into the new appointment_clients

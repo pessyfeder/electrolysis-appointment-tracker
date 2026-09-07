@@ -54,6 +54,8 @@ PyInstaller. No cloud, no network calls, no email/SMS.
   Block Time Off / Billing strip), gated by the Admin password to switch
   into (spec 7.4)
 - Local-only SQLite database in `%APPDATA%\ElectrolysisScheduler\scheduler.db`
+- Admin-gated in-app Backup/Restore of that database file (Admin tab →
+  Backup & Restore)
 
 ## Project layout
 
@@ -120,7 +122,15 @@ C:\Users\User\AppData\Local\Programs\PythonEmbed313\python.exe -m PyInstaller --
 ```
 The finished app is `dist\ElectrolysisScheduler\ElectrolysisScheduler.exe` —
 copy the whole `ElectrolysisScheduler` folder wherever you want to run it
-from; it needs no Python install on the target machine.
+from; it needs no Python install on the target machine. The `_internal`
+folder next to the `.exe` is required (Python runtime, Qt, and other
+dependencies) — the app won't launch if it's separated from the `.exe`.
+
+To rebuild **and** package the result as a single zip (so it can't
+accidentally be shared without `_internal`), run `build_release.bat`
+instead. It closes any running instance, rebuilds via PyInstaller, and
+writes `release\ElectrolysisScheduler.zip` containing the whole
+`ElectrolysisScheduler` folder.
 
 ## Where the data lives / backups
 
@@ -130,10 +140,12 @@ All data is in a single SQLite file:
 ```
 (i.e. `C:\Users\<you>\AppData\Roaming\ElectrolysisScheduler\scheduler.db`)
 
-There is no cloud backup by design (spec 7.5/9). Periodically copy that file
-to a USB drive or another folder to protect against disk failure — Phase 3
-in the spec calls out a future in-app "copy database file to..." button as
-an optional enhancement if this becomes a concern.
+There is no cloud backup by design (spec 7.5/9). Use **Admin tab → Backup &
+Restore** to save a copy to a USB drive or another folder, or to restore
+from a previous backup (admin-password-gated; restoring closes the app so
+it can reopen with the restored data) — this replaces the Phase 3
+"copy database file to..." placeholder the spec called out as a future
+enhancement.
 
 ## Password reset
 

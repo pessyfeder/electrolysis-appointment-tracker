@@ -127,6 +127,13 @@ class AppointmentDialog(QDialog):
 
         form = QFormLayout()
 
+        # Duration comes first: booking now asks for the session length
+        # before a date is even picked, so its options can't be bounded by
+        # a specific day's business hours the way they used to be - see
+        # scheduling.default_duration_options().
+        self.duration_combo = QComboBox()
+        self.duration_combo.setEnabled(self._editing_timing)
+
         self.date_edit = ClickToOpenDateEdit()
         if self._timing_editable:
             # Past dates are never bookable, whether this is a brand-new
@@ -134,19 +141,19 @@ class AppointmentDialog(QDialog):
             # rescheduled - grayed out and unselectable in the calendar.
             self.date_edit.setMinimumDate(QDate.currentDate())
             # Likewise for days with no open business hours at all (e.g.
-            # closed weekdays) or that are fully blocked off - there's
+            # closed weekdays), that are fully blocked off, or that simply
+            # can't fit the currently-chosen duration anywhere - there's
             # nothing to pick a start time from on those, so they're grayed
             # out and unselectable in the popup too, same as past dates.
             self.date_edit.set_availability_check(
-                lambda qd: bool(scheduling.bookable_start_candidates(qd.toPython(), exclude_id=self.appt_id))
+                lambda qd: bool(scheduling.bookable_start_candidates(
+                    qd.toPython(), min_duration=self._current_duration(), exclude_id=self.appt_id
+                ))
             )
         self.date_edit.setEnabled(self._editing_timing)
 
         self.time_combo = QComboBox()
         self.time_combo.setEnabled(self._editing_timing)
-
-        self.duration_combo = QComboBox()
-        self.duration_combo.setEnabled(self._editing_timing)
 
         initial_duration = None
         if appt_row:
@@ -162,22 +169,22 @@ class AppointmentDialog(QDialog):
             self.date_edit.setDate(QDate.currentDate())
             initial_start_dt = scheduling.earliest_bookable_start(datetime.now().date())
 
+        form.addRow(required_label("Duration:"), self.duration_combo)
         form.addRow(required_label("Date:"), self.date_edit)
         form.addRow(required_label("Start time:"), self.time_combo)
-        form.addRow(required_label("Duration:"), self.duration_combo)
 
         self.end_time_label = QLabel()
         form.addRow("Ends:", self.end_time_label)
 
         if self._timing_editable:
+            self.duration_combo.currentIndexChanged.connect(self._on_duration_changed)
             self.date_edit.dateChanged.connect(self._on_date_changed)
-            self.time_combo.currentIndexChanged.connect(self._on_date_or_time_changed)
-            self.duration_combo.currentIndexChanged.connect(self._refresh_end_label)
+            self.time_combo.currentIndexChanged.connect(self._refresh_end_label)
+            self._populate_duration_options(initial=initial_duration)
             self._populate_time_options(self.date_edit.date().toPython(), initial_dt=initial_start_dt)
-            self._refresh_duration_options(initial=initial_duration)
         else:
-            self.time_combo.addItem(format_12h(initial_start_dt), initial_start_dt)
             self.duration_combo.addItem(format_duration_minutes(initial_duration), initial_duration)
+            self.time_combo.addItem(format_12h(initial_start_dt), initial_start_dt)
             self._refresh_end_label()
 
         self.notes_edit = QTextEdit(appt_row["notes"] if appt_row and appt_row["notes"] else "")
@@ -231,31 +238,61 @@ class AppointmentDialog(QDialog):
 
     # ---- timing helpers ----
 
-    def _current_start(self):
-        dt = self.time_combo.currentData()
-        if dt is not None:
-            return dt
-        d = self.date_edit.date()
-        return datetime(d.year(), d.month(), d.day(), 0, 0)
+    def _current_duration(self):
+        minutes = self.duration_combo.currentData()
+        return minutes if minutes is not None else scheduling.MIN_APPOINTMENT_MINUTES
+
+    def _populate_duration_options(self, initial=None):
+        """Fills the Duration dropdown from a generic, date-independent
+        list (scheduling.default_duration_options) since duration is now
+        chosen before any date/start time exists to bound it against - see
+        _populate_time_options for how the chosen duration then filters
+        Start time instead. `initial` is kept in the list even if it
+        wouldn't otherwise be offered, so editing an appointment always
+        shows its own current duration as an option."""
+        options = scheduling.default_duration_options()
+        if initial is not None and initial not in options:
+            options = sorted(set(options) | {initial})
+        self.duration_combo.blockSignals(True)
+        self.duration_combo.clear()
+        for m in options:
+            self.duration_combo.addItem(format_duration_minutes(m), m)
+        idx = self.duration_combo.findData(initial) if initial is not None else 0
+        if idx < 0:
+            idx = 0
+        if idx < self.duration_combo.count():
+            self.duration_combo.setCurrentIndex(idx)
+        self.duration_combo.blockSignals(False)
 
     def _populate_time_options(self, date_, initial_dt=None):
-        """Fills the start-time dropdown with every 5-minute-interval time
-        on `date_` that a minimum-length appointment could start at (spec:
-        clicking Start Time should show a dropdown with ALL possible start
-        times in 5-minute intervals; selecting one displays it in the
-        field), grouped under non-selectable "Morning Appointments" /
-        "Evening Appointments" headers - business hours split into an AM
-        and a PM/evening block (see TimeGridWidget), and a long flat list of
-        times reads a lot easier broken up the same way. Each heading names
-        its own actual hours (e.g. "Evening Appointments (7:30 PM - 10:30
-        PM)") rather than a bare generic label, since those hours vary by
-        weekday and can be overridden per-date (see BusinessHoursEditor) -
-        a plain "Evening" heading would otherwise read as always starting
-        at some assumed standard time. `initial_dt` is kept in the list
-        even if it wouldn't otherwise be offered, so editing an appointment
-        always shows its own current time as an option."""
-        candidates = scheduling.bookable_start_candidates(date_, exclude_id=self.appt_id)
-        if initial_dt is not None and initial_dt not in candidates:
+        """Fills the start-time dropdown with every
+        scheduling.START_TIME_STEP_MINUTES-interval time on `date_` that
+        the currently-chosen duration (_current_duration) could start at
+        and run to completion without a conflict, grouped under
+        non-selectable "Morning Appointments" / "Evening Appointments"
+        headers - business hours split into an AM and a PM/evening block
+        (see TimeGridWidget), and a long flat list of times reads a lot
+        easier broken up the same way. Each heading names its own actual
+        hours (e.g. "Evening Appointments (7:30 PM - 10:30 PM)") rather
+        than a bare generic label, since those hours vary by weekday and
+        can be overridden per-date (see BusinessHoursEditor) - a plain
+        "Evening" heading would otherwise read as always starting at some
+        assumed standard time. For an existing appointment being edited,
+        `initial_dt` (its own currently-saved time) is kept in the list
+        even if it wouldn't otherwise be offered, so opening it always
+        shows its own current time as an option. For a brand-new
+        appointment, `initial_dt` is only ever a suggested starting point
+        (the calendar slot that was double-clicked, or the day's earliest
+        opening) - it must still actually be available, or a slot that
+        merely looks free on the calendar but overlaps an existing
+        appointment could otherwise be offered and picked, only to be
+        rejected at Save."""
+        min_duration = self._current_duration()
+        candidates = scheduling.bookable_start_candidates(
+            date_, min_duration=min_duration, exclude_id=self.appt_id,
+            step=scheduling.START_TIME_STEP_MINUTES,
+        )
+        if initial_dt is not None and not self._is_new and initial_dt not in candidates:
             candidates = sorted(candidates + [initial_dt])
         earliest = candidates[0] if candidates else None
 
@@ -296,6 +333,16 @@ class AppointmentDialog(QDialog):
                 item = QStandardItem(label)
                 item.setData(dt, Qt.UserRole)
                 model.appendRow(item)
+        if not candidates:
+            # Duration is picked before a date, so it's entirely possible
+            # to land on a date that just can't fit the chosen length
+            # anywhere - make that explicit instead of leaving the dropdown
+            # looking blank/broken.
+            empty_item = QStandardItem(
+                f"No available start times for a {format_duration_minutes(min_duration)} session"
+            )
+            empty_item.setFlags(empty_item.flags() & ~(Qt.ItemIsEnabled | Qt.ItemIsSelectable))
+            model.appendRow(empty_item)
         self.time_combo.setModel(model)
 
         target = initial_dt if initial_dt is not None else earliest
@@ -305,6 +352,7 @@ class AppointmentDialog(QDialog):
         if idx >= 0:
             self.time_combo.setCurrentIndex(idx)
         self.time_combo.blockSignals(False)
+        self._refresh_end_label()
 
     @staticmethod
     def _time_group_heading(label, blocks):
@@ -323,36 +371,23 @@ class AppointmentDialog(QDialog):
                 return i
         return -1
 
+    def _on_duration_changed(self):
+        # A duration change can affect which start times fit that day (a
+        # longer session may no longer fit, a shorter one may open up new
+        # ones), so Start time is always recomputed from scratch here
+        # rather than trying to preserve whatever was selected before.
+        self._populate_time_options(self.date_edit.date().toPython())
+
     def _on_date_changed(self):
         self._populate_time_options(self.date_edit.date().toPython())
-        self._refresh_duration_options()
-
-    def _on_date_or_time_changed(self):
-        self._refresh_duration_options()
-
-    def _refresh_duration_options(self, initial=None):
-        start = self._current_start()
-        options = scheduling.valid_durations(start, exclude_id=self.appt_id)
-        current = self.duration_combo.currentData() if self.duration_combo.count() else None
-        self.duration_combo.blockSignals(True)
-        self.duration_combo.clear()
-        for m in options:
-            self.duration_combo.addItem(format_duration_minutes(m), m)
-        target = initial if initial is not None else current
-        idx = self.duration_combo.findData(target) if target is not None else -1
-        if idx < 0 and self.duration_combo.count():
-            idx = 0
-        if idx >= 0:
-            self.duration_combo.setCurrentIndex(idx)
-        self.duration_combo.blockSignals(False)
-        self._refresh_end_label()
 
     def _refresh_end_label(self):
         minutes = self.duration_combo.currentData()
-        if minutes is None:
-            self.end_time_label.setText("No valid duration for this start time")
+        start = self.time_combo.currentData()
+        if minutes is None or start is None:
+            self.end_time_label.setText("—")
             return
-        end = self._current_start() + timedelta(minutes=minutes)
+        end = start + timedelta(minutes=minutes)
         self.end_time_label.setText(format_12h(end))
 
     def _start_reschedule(self):
@@ -360,8 +395,8 @@ class AppointmentDialog(QDialog):
         self.date_edit.setEnabled(True)
         self.time_combo.setEnabled(True)
         self.duration_combo.setEnabled(True)
-        self.date_edit.setFocus()
-        self.date_edit._show_popup()
+        self.duration_combo.setFocus()
+        self.duration_combo.showPopup()
 
     # ---- client list ----
 
@@ -603,7 +638,14 @@ class AppointmentDialog(QDialog):
         name = format_client_name(c["first_name"], c["last_name"])
         if QMessageBox.question(self, "Confirm", f"Are you sure you want to {verb} for {name}?") != QMessageBox.Yes:
             return
-        models.set_client_status(c["id"], status)
+        if status == "no_show":
+            # They booked the slot and it was held for them, so they owe the
+            # full price of it whether or not they actually showed up.
+            start_dt = datetime.fromisoformat(self.appt_row["start_datetime"])
+            end_dt = datetime.fromisoformat(self.appt_row["end_datetime"])
+            models.mark_no_show(c["id"], billing.calculate_price(start_dt, end_dt))
+        else:
+            models.set_client_status(c["id"], status)
         self.result_changed = True
         self._reload_from_db()
 
@@ -690,10 +732,17 @@ class AppointmentDialog(QDialog):
 
         minutes = self.duration_combo.currentData()
         if minutes is None:
-            QMessageBox.warning(self, "Invalid Duration", "Choose a valid duration for this start time.")
+            QMessageBox.warning(self, "Invalid Duration", "Choose a session duration.")
             return
 
-        start_dt = self._current_start()
+        start_dt = self.time_combo.currentData()
+        if start_dt is None:
+            QMessageBox.warning(
+                self, "No Start Time",
+                "There's no available start time for that duration on this date - "
+                "pick a different duration or date."
+            )
+            return
         end_dt = start_dt + timedelta(minutes=minutes)
 
         # Only re-validate business-hours/overlap/blocked-time rules when the

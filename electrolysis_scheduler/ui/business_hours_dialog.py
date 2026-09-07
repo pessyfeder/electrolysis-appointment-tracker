@@ -8,7 +8,7 @@ from PySide6.QtCore import QDate, QTime, Signal
 
 from app import models, scheduling
 from app.util import format_12h, format_client_name
-from ui.widgets import ClickToOpenDateEdit, required_label, apply_large_form_style
+from ui.widgets import ClickToOpenDateEdit, required_label, ADMIN_FORM_COLUMN_WIDTH as FORM_COLUMN_WIDTH
 
 
 class _BlockRow(QWidget):
@@ -80,32 +80,64 @@ class BusinessHoursEditor(QWidget):
 
         outer = QVBoxLayout(self)
 
+        # See ADMIN_FORM_COLUMN_WIDTH for why this is a nested fixed-width
+        # widget rather than a maximumWidth on `self` directly. add_row_btn
+        # goes inside this same column (not directly on `outer`) so it
+        # stretches to match the date/time rows' width instead of the page's.
+        content = QWidget()
+        content.setMaximumWidth(FORM_COLUMN_WIDTH)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(16)
+
         date_row = QHBoxLayout()
         date_row.addWidget(required_label("Date:"))
         self.date_edit = ClickToOpenDateEdit()
+        # Spelled out (weekday + full month name) rather than the app-wide
+        # numeric default, so it's unambiguous which date is loaded/about to
+        # be overridden without having to cross-reference a calendar.
+        self.date_edit.setDisplayFormat("dddd, MMMM d, yyyy")
         self.date_edit.setDate(QDate.currentDate())
         self.date_edit.dateChanged.connect(self._load_for_current_date)
         date_row.addWidget(self.date_edit)
         date_row.addStretch()
-        outer.addLayout(date_row)
+        content_layout.addLayout(date_row)
 
         self.status_hint = QLabel("")
         self.status_hint.setWordWrap(True)
         self.status_hint.setStyleSheet("color: #64748b; font-size: 11px;")
-        outer.addWidget(self.status_hint)
+        content_layout.addWidget(self.status_hint)
 
         self.rows_container = QVBoxLayout()
-        outer.addLayout(self.rows_container)
+        self.rows_container.setSpacing(10)
+        content_layout.addLayout(self.rows_container)
 
         self.add_row_btn = QPushButton("+ Add time block")
         self.add_row_btn.clicked.connect(lambda: self._add_row())
-        outer.addWidget(self.add_row_btn)
+        content_layout.addWidget(self.add_row_btn)
 
-        outer.addStretch()
+        # Without this, giving content_row the outer stretch factor below
+        # (needed to push reset_btn/btn_row down to the bottom of the page)
+        # also stretches `content` itself taller than its natural size - and
+        # with no stretch of its own, content_layout distributes that extra
+        # room by spreading the date row/status hint/block rows/add button
+        # apart from each other instead of collecting it in one place. This
+        # claims that leftover space right here, keeping the rows packed
+        # together at the top.
+        content_layout.addStretch()
+
+        content_row = QHBoxLayout()
+        content_row.addWidget(content)
+        content_row.addStretch(1)
+        outer.addLayout(content_row, 1)
 
         self.reset_btn = QPushButton("Reset to Default Hours")
         self.reset_btn.clicked.connect(self._reset_to_default)
-        outer.addWidget(self.reset_btn)
+        self.reset_btn.setMaximumWidth(FORM_COLUMN_WIDTH)
+        reset_row = QHBoxLayout()
+        reset_row.addWidget(self.reset_btn)
+        reset_row.addStretch(1)
+        outer.addLayout(reset_row)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -124,7 +156,6 @@ class BusinessHoursEditor(QWidget):
         btn_row.addWidget(self.save_btn)
         outer.addLayout(btn_row)
 
-        apply_large_form_style(self)
         self._load_for_current_date()
 
     def _current_date(self):

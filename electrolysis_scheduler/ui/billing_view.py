@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor
 from app import models, billing
 from app.util import format_client_name
 from ui.client_detail_dialog import ClientDetailDialog
+from ui.payment_report_dialog import PaymentReportDialog
 from ui.widgets import (
     ClickToOpenDateEdit, TypeOnlyDoubleSpinBox, open_dropdown_on_click,
     required_label, required_hint_label, make_card, style_history_table
@@ -85,14 +86,19 @@ class BillingView(QWidget):
         balances_hint.setWordWrap(True)
         balances_hint.setStyleSheet("color: #64748b;")
         balances_layout.addWidget(balances_hint)
-        self.balances_table = QTableWidget(0, 2)
-        self.balances_table.setHorizontalHeaderLabels(["Client", "Balance"])
-        style_history_table(self.balances_table, stretch_column=0)
+        self.balances_table = QTableWidget(0, 3)
+        self.balances_table.setHorizontalHeaderLabels(["Client", "Balance", "Notes"])
+        style_history_table(self.balances_table, stretch_column=2)
         self.balances_table.itemDoubleClicked.connect(self._open_client_detail)
         balances_layout.addWidget(self.balances_table)
-        right.addWidget(balances_box, 2)
+        right.addWidget(balances_box, 1)
 
-        export_box, export_layout = make_card("Export Payments (CSV)")
+        # Payment report - viewing it opens a large, dedicated popup window
+        # (PaymentReportDialog) since the tablet this app runs on has no
+        # spreadsheet or PDF viewer to open an exported file with. CSV
+        # export is kept here as a secondary option (e.g. for a machine
+        # that does have Excel).
+        report_box, report_layout = make_card("Payment Report")
         range_row = QHBoxLayout()
         self.start_date_edit = ClickToOpenDateEdit()
         self.start_date_edit.setDate(QDate.currentDate().addMonths(-1))
@@ -102,11 +108,17 @@ class BillingView(QWidget):
         range_row.addWidget(self.start_date_edit)
         range_row.addWidget(QLabel("To:"))
         range_row.addWidget(self.end_date_edit)
-        export_layout.addLayout(range_row)
+        report_layout.addLayout(range_row)
+
+        view_report_btn = QPushButton("View Report")
+        view_report_btn.setObjectName("primaryButton")
+        view_report_btn.clicked.connect(self._view_report)
+        report_layout.addWidget(view_report_btn)
+
         export_btn = QPushButton("Export CSV…")
         export_btn.clicked.connect(self._export_csv)
-        export_layout.addWidget(export_btn)
-        right.addWidget(export_box, 1)
+        report_layout.addWidget(export_btn)
+        right.addWidget(report_box)
 
         root.addLayout(right, 1)
 
@@ -155,6 +167,8 @@ class BillingView(QWidget):
             font.setBold(True)
             item.setFont(font)
             self.balances_table.setItem(row, 1, item)
+            notes = "No Show" if models.client_has_no_show(c["id"]) else ""
+            self.balances_table.setItem(row, 2, QTableWidgetItem(notes))
 
     def _open_client_detail(self, item):
         row = item.row()
@@ -201,14 +215,36 @@ class BillingView(QWidget):
         self.refresh()
         QMessageBox.information(self, "Payment Recorded", f"Recorded ${amount:.2f}.")
 
-    def _export_csv(self):
+    def _report_range(self):
+        """(start_dt, end_dt) for the currently-selected report range, or
+        None (after showing a warning) if the range is invalid."""
         start_d = self.start_date_edit.date()
         end_d = self.end_date_edit.date()
         start_dt = datetime(start_d.year(), start_d.month(), start_d.day(), 0, 0)
         end_dt = datetime(end_d.year(), end_d.month(), end_d.day(), 23, 59, 59)
         if end_dt < start_dt:
             QMessageBox.warning(self, "Invalid Range", "End date must be on or after the start date.")
+            return None
+        return start_dt, end_dt
+
+    def _view_report(self):
+        range_ = self._report_range()
+        if range_ is None:
             return
+        start_dt, end_dt = range_
+        payments = models.list_payments_between(start_dt, end_dt)
+        unpaid_charges = models.list_unpaid_charges_between(start_dt, end_dt)
+        dlg = PaymentReportDialog(
+            self, self.start_date_edit.date(), self.end_date_edit.date(), payments, unpaid_charges
+        )
+        dlg.exec()
+
+    def _export_csv(self):
+        range_ = self._report_range()
+        if range_ is None:
+            return
+        start_dt, end_dt = range_
+        start_d, end_d = self.start_date_edit.date(), self.end_date_edit.date()
         default_name = f"payments_{start_d.toString('yyyy-MM-dd')}_to_{end_d.toString('yyyy-MM-dd')}.csv"
         path, _ = QFileDialog.getSaveFileName(self, "Export Payments CSV", default_name, "CSV Files (*.csv)")
         if not path:

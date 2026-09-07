@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
         self.billing_view = BillingView(self, require_admin=self.require_admin)
         self.admin_view = AdminView(
             self, billing_view=self.billing_view, on_calendar_changed=self.calendar_view.refresh,
+            require_admin=self.require_admin,
         )
 
         self.tabs.addTab(self.calendar_view, "Appointments")

@@ -10,6 +10,13 @@ def format_12h(dt) -> str:
     return f"{hour}:{dt.minute:02d} {ampm}"
 
 
+def format_full_datetime(dt) -> str:
+    """'September 23, 2026 1:15 PM' - full month name and an unpadded day,
+    for history tables where a compact '2026-09-23' reads as data-dumpy
+    rather than something a client-facing report should show."""
+    return f"{dt.strftime('%B')} {dt.day}, {dt.year} {format_12h(dt)}"
+
+
 def format_duration_minutes(total_minutes) -> str:
     """Formats a duration in minutes as '45 min' or, once it reaches an hour,
     as 'x hour(s) x minute(s)' (omitting the minutes part when it's zero)."""

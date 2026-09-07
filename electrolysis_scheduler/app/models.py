@@ -110,14 +110,31 @@ def _apply_no_show_transitions(conn):
     ended without ever being started missed it - promote them to no_show so
     the calendar reflects reality without Admin having to notice and flip it
     by hand. Run on every read path below rather than on a timer, so the
-    status is always correct by the time it's displayed."""
+    status is always correct by the time it's displayed.
+
+    A no-show is billed the same as a completed session - they owe the full
+    price of the slot they booked, since it was held for them whether or not
+    they showed up (see client_balance). Also backfills price for any
+    already-no_show row still missing one (e.g. promoted before this
+    billing behavior existed), so a pre-existing no-show doesn't silently
+    stay uncharged."""
+    from app.billing import calculate_price
+    rows = conn.execute(
+        "SELECT ac.id, a.start_datetime, a.end_datetime FROM appointment_clients ac "
+        "JOIN appointments a ON a.id = ac.appointment_id "
+        "WHERE (ac.status='scheduled' AND a.end_datetime < ?) "
+        "OR (ac.status='no_show' AND ac.price IS NULL)",
+        (now_iso(),),
+    ).fetchall()
     with conn:
-        conn.execute(
-            "UPDATE appointment_clients SET status='no_show' "
-            "WHERE status='scheduled' AND appointment_id IN ("
-            "SELECT id FROM appointments WHERE end_datetime < ?)",
-            (now_iso(),),
-        )
+        for r in rows:
+            price = calculate_price(
+                datetime.fromisoformat(r["start_datetime"]), datetime.fromisoformat(r["end_datetime"])
+            )
+            conn.execute(
+                "UPDATE appointment_clients SET status='no_show', price=? WHERE id=?",
+                (price, r["id"]),
+            )
 
 
 def is_appointment_active(appt_bundle) -> bool:
@@ -180,6 +197,17 @@ def set_client_status(appt_client_id, status):
     conn = get_connection()
     with conn:
         conn.execute("UPDATE appointment_clients SET status=? WHERE id=?", (status, appt_client_id))
+
+
+def mark_no_show(appt_client_id, price):
+    """A client who never showed up owes the full price of the slot they
+    booked, same as if they'd come in and completed it."""
+    conn = get_connection()
+    with conn:
+        conn.execute(
+            "UPDATE appointment_clients SET status='no_show', price=? WHERE id=?",
+            (price, appt_client_id),
+        )
 
 
 def start_client_session(appt_client_id, started_at_iso):
@@ -312,18 +340,88 @@ def list_payments_between(start_dt, end_dt):
     ).fetchall()
 
 
+def _client_unpaid_charges(conn, client_id):
+    """Every billed charge (completed or no-show) for this client, in date
+    order, with how much of each is still unpaid - payments aren't tied to
+    a specific appointment (the Record a Payment form just pays down the
+    client's balance generally), so there's no stored link from a payment
+    back to "the" charge it settled. This applies the client's total
+    payments to their charges oldest-first (a standard AR aging/FIFO
+    assumption) to recover a specific unpaid amount per charge; the unpaid
+    amounts always sum to exactly client_balance() when positive."""
+    charges = conn.execute(
+        "SELECT ac.price AS amount, a.start_datetime, c.first_name, c.last_name, ac.status "
+        "FROM appointment_clients ac "
+        "JOIN appointments a ON a.id = ac.appointment_id "
+        "JOIN clients c ON c.id = ac.client_id "
+        "WHERE ac.client_id=? AND ac.status IN ('completed', 'no_show') AND ac.price IS NOT NULL "
+        "ORDER BY a.start_datetime",
+        (client_id,),
+    ).fetchall()
+    pool = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE client_id=?", (client_id,)
+    ).fetchone()["total"]
+    result = []
+    for ch in charges:
+        amount = ch["amount"]
+        unpaid = amount - pool if pool < amount else 0.0
+        pool = max(0.0, pool - amount)
+        result.append({
+            "amount": round(unpaid, 2), "start_datetime": ch["start_datetime"],
+            "first_name": ch["first_name"], "last_name": ch["last_name"], "status": ch["status"],
+        })
+    return result
+
+
+def list_unpaid_charges_between(start_dt, end_dt):
+    """Unpaid portion of every charge (completed or no-show) whose
+    appointment fell in this range. Unlike payments (filtered by when they
+    were paid), a charge that's never been paid has no payment date to
+    filter by - so this filters by the charge's own appointment date
+    instead."""
+    conn = get_connection()
+    client_ids = [
+        r["client_id"] for r in conn.execute(
+            "SELECT DISTINCT ac.client_id FROM appointment_clients ac "
+            "JOIN appointments a ON a.id = ac.appointment_id "
+            "WHERE ac.status IN ('completed', 'no_show') AND ac.price IS NOT NULL "
+            "AND a.start_datetime >= ? AND a.start_datetime <= ?",
+            (start_dt.isoformat(), end_dt.isoformat()),
+        ).fetchall()
+    ]
+    charges = []
+    for client_id in client_ids:
+        for ch in _client_unpaid_charges(conn, client_id):
+            if start_dt.isoformat() <= ch["start_datetime"] <= end_dt.isoformat() and ch["amount"] > 0:
+                charges.append(ch)
+    charges.sort(key=lambda ch: ch["start_datetime"])
+    return charges
+
+
 def client_balance(client_id):
-    """Positive = client owes money. Negative = client has a credit."""
+    """Positive = client owes money. Negative = client has a credit.
+    A no-show is charged the same as a completed session (see
+    _apply_no_show_transitions/mark_no_show), so it counts toward what's
+    owed exactly like a completed one does."""
     conn = get_connection()
     charged = conn.execute(
         "SELECT COALESCE(SUM(price), 0) AS total FROM appointment_clients "
-        "WHERE client_id=? AND status='completed'",
+        "WHERE client_id=? AND status IN ('completed', 'no_show')",
         (client_id,),
     ).fetchone()["total"]
     paid = conn.execute(
         "SELECT COALESCE(SUM(amount), 0) AS total FROM payments WHERE client_id=?", (client_id,)
     ).fetchone()["total"]
     return round(charged - paid, 2)
+
+
+def client_has_no_show(client_id):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT 1 FROM appointment_clients WHERE client_id=? AND status='no_show' LIMIT 1",
+        (client_id,),
+    ).fetchone()
+    return row is not None
 
 
 # ---------------- Blocked Times ----------------

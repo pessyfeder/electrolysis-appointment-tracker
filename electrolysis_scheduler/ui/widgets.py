@@ -11,6 +11,14 @@ _ENABLED_DATE_FORMAT = QTextCharFormat()
 
 REQUIRED_COLOR = "#dc2626"
 
+# Caps a settings-style form (Edit Business Hours, Block Time Off) to a
+# fixed-width column instead of stretching it across the whole Admin tab
+# page - both are embedded in a QStackedWidget, which always resizes its
+# current page to the tab's full width regardless of the page's own
+# maximumWidth, so each form wraps its own controls in an inner widget
+# capped to this width to get a compact column instead.
+ADMIN_FORM_COLUMN_WIDTH = 560
+
 
 def required_label(text):
     """A QFormLayout row label like 'Date: *' with the asterisk in red,
@@ -27,30 +35,6 @@ def required_hint_label():
     lbl = QLabel("* Required")
     lbl.setStyleSheet(f"color: {REQUIRED_COLOR}; font-size: 11px;")
     return lbl
-
-
-# Scoped (via apply_large_form_style below), not a global theme.py change -
-# Edit Business Hours and Block Time Off are the two forms an admin is most
-# likely to be squinting at on a small/low-res screen (a front-desk tablet
-# or laptop), so their text and controls run noticeably larger than the
-# rest of the app's normal 10pt baseline instead of everywhere at once.
-LARGE_FORM_FONT_PT = 13
-
-
-def apply_large_form_style(widget):
-    """Bumps font size and control padding for `widget` and everything
-    inside it - a plain instance-level setStyleSheet, so it never leaks to
-    a QMessageBox or other separately-parented top-level window it spawns,
-    only to its own descendants."""
-    widget.setStyleSheet(f"""
-        QLabel {{ font-size: {LARGE_FORM_FONT_PT}pt; }}
-        QPushButton {{ font-size: {LARGE_FORM_FONT_PT}pt; padding: 10px 20px; }}
-        QTimeEdit, QDateEdit, QTextEdit, QCheckBox {{
-            font-size: {LARGE_FORM_FONT_PT}pt;
-        }}
-        QTimeEdit, QDateEdit {{ padding: 8px 10px; }}
-        QCheckBox::indicator {{ width: 22px; height: 22px; }}
-    """)
 
 
 def make_card(title):

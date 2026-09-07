@@ -8,7 +8,9 @@ from PySide6.QtCore import QDate, QTime
 
 from app import models
 from app.util import format_client_name
-from ui.widgets import ClickToOpenDateEdit, required_label, required_hint_label, apply_large_form_style
+from ui.widgets import (
+    ClickToOpenDateEdit, required_label, required_hint_label, ADMIN_FORM_COLUMN_WIDTH
+)
 
 
 class BlockTimeForm(QWidget):
@@ -25,6 +27,15 @@ class BlockTimeForm(QWidget):
         self._default_start_dt = start_dt or datetime.now()
 
         layout = QVBoxLayout(self)
+
+        # See ADMIN_FORM_COLUMN_WIDTH: a fixed-width inner column rather than
+        # letting the form (and the Reason box especially, which is
+        # Expanding by default) stretch across the whole Admin tab page.
+        content = QWidget()
+        content.setMaximumWidth(ADMIN_FORM_COLUMN_WIDTH)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+
         form = QFormLayout()
 
         self.date_edit = ClickToOpenDateEdit()
@@ -47,9 +58,14 @@ class BlockTimeForm(QWidget):
         self.reason_edit.setPlaceholderText("Why are you unavailable?")
         form.addRow(required_label("Reason:"), self.reason_edit)
 
-        layout.addLayout(form)
+        content_layout.addLayout(form)
 
-        layout.addWidget(required_hint_label())
+        content_layout.addWidget(required_hint_label())
+
+        content_row = QHBoxLayout()
+        content_row.addWidget(content)
+        content_row.addStretch(1)
+        layout.addLayout(content_row)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -81,7 +97,6 @@ class BlockTimeForm(QWidget):
         self.end_time_edit.timeChanged.connect(self._mark_dirty)
         self.reason_edit.textChanged.connect(self._mark_dirty)
 
-        apply_large_form_style(self)
         self._loading = False
         self._reset_fields()
 

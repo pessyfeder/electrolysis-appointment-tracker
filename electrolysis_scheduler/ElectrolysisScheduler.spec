@@ -1,5 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+# datas=[] below is empty because there are currently no non-.py resource
+# files (icons, images, templates, etc.) the app loads at runtime - only
+# PyInstaller's automatic import scanning is relied on. If one is ever
+# added, it must be listed explicitly here (e.g.
+# ('ui/assets/icon.ico', 'ui/assets')) or PyInstaller will silently omit it
+# from the build even though `python main.py` still works fine from source.
 
 a = Analysis(
     ['main.py'],

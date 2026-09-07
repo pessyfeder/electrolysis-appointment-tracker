@@ -121,11 +121,11 @@ QListWidget::item:selected, QTableWidget::item:selected {
     color: #1e293b;
 }
 QHeaderView::section {
-    background: #f1f5f9;
-    color: #334155;
+    background: #2563eb;
+    color: #ffffff;
     padding: 3px 6px;
     border: none;
-    border-bottom: 1px solid #94a3b8;
+    border-bottom: 1px solid #1d4ed8;
     font-weight: 700;
 }
 

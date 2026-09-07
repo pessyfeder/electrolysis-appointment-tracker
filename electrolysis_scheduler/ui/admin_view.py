@@ -6,19 +6,21 @@ from PySide6.QtWidgets import (
 
 from ui.business_hours_dialog import BusinessHoursEditor
 from ui.block_time_dialog import BlockTimeForm
+from ui.backup_view import BackupView
 
 
 class AdminView(QWidget):
     """The Admin tab: a segmented control (same visual pattern as the
-    calendar's Day/Week/Month toggle) that switches between three always-
-    embedded pages - Edit Business Hours, Block Time Off, and Billing -
-    instead of a menu that launches separate dialogs/pages. Opens on Edit
-    Business Hours by default."""
+    calendar's Day/Week/Month toggle) that switches between four always-
+    embedded pages - Edit Business Hours, Block Time Off, Billing, and
+    Backup & Restore - instead of a menu that launches separate
+    dialogs/pages. Opens on Edit Business Hours by default."""
 
-    def __init__(self, parent=None, billing_view=None, on_calendar_changed=None):
+    def __init__(self, parent=None, billing_view=None, on_calendar_changed=None, require_admin=None):
         super().__init__(parent)
         self.billing_view = billing_view
         self.on_calendar_changed = on_calendar_changed or (lambda: None)
+        self.require_admin = require_admin or (lambda: True)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
@@ -40,9 +42,10 @@ class AdminView(QWidget):
         self.hours_btn = QPushButton("Edit Business Hours")
         self.block_btn = QPushButton("Block Time Off")
         self.billing_btn = QPushButton("Billing")
+        self.backup_btn = QPushButton("Backup & Restore")
         self._group = QButtonGroup(segmented)
         self._group.setExclusive(True)
-        for btn in (self.hours_btn, self.block_btn, self.billing_btn):
+        for btn in (self.hours_btn, self.block_btn, self.billing_btn, self.backup_btn):
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
             self._group.addButton(btn)
@@ -62,9 +65,11 @@ class AdminView(QWidget):
         # friction with no security benefit.
         self.hours_editor = BusinessHoursEditor(on_saved=self._on_hours_saved)
         self.block_form = BlockTimeForm(on_saved=self._on_block_saved)
+        self.backup_view = BackupView(require_admin=self.require_admin)
         self.stack.addWidget(self.hours_editor)
         self.stack.addWidget(self.block_form)
         self.stack.addWidget(self.billing_view)
+        self.stack.addWidget(self.backup_view)
 
         # Set the initial checked state before wiring up toggled - connecting
         # first would fire the stack switch before the stack itself (and the
@@ -73,6 +78,7 @@ class AdminView(QWidget):
         self.hours_btn.toggled.connect(lambda checked: checked and self.stack.setCurrentIndex(0))
         self.block_btn.toggled.connect(lambda checked: checked and self.stack.setCurrentIndex(1))
         self.billing_btn.toggled.connect(lambda checked: checked and self._show_billing())
+        self.backup_btn.toggled.connect(lambda checked: checked and self.stack.setCurrentIndex(3))
 
     def _show_billing(self):
         self.billing_view.refresh()

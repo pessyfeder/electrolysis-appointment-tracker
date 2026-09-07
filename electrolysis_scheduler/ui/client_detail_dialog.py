@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 )
 
 from app import models
-from app.util import format_12h, format_client_name, format_phone
+from app.util import format_client_name, format_full_datetime, format_phone
 from ui.widgets import make_card, style_history_table
 
 STATUS_LABELS = {
@@ -30,7 +30,8 @@ class ClientDetailDialog(QDialog):
         self.archived = bool(c["archived"])
         display_name = format_client_name(c["first_name"], c["last_name"])
         self.setWindowTitle(display_name)
-        self.setMinimumSize(560, 620)
+        self.setMinimumSize(700, 700)
+        self.resize(900, 850)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 4, 4, 4)
@@ -91,7 +92,7 @@ class ClientDetailDialog(QDialog):
         self.appt_table.setRowCount(len(appts))
         for row, a in enumerate(appts):
             dt = datetime.fromisoformat(a["start_datetime"])
-            self.appt_table.setItem(row, 0, QTableWidgetItem(f"{dt.strftime('%Y-%m-%d')} {format_12h(dt)}"))
+            self.appt_table.setItem(row, 0, QTableWidgetItem(format_full_datetime(dt)))
             self.appt_table.setItem(row, 1, QTableWidgetItem(STATUS_LABELS.get(a["status"], a["status"])))
             self.appt_table.setItem(row, 2, QTableWidgetItem(a["appointment_notes"] or ""))
             self.appt_table.setItem(row, 3, QTableWidgetItem(f"${a['price']:.2f}" if a["price"] is not None else ""))
@@ -100,7 +101,7 @@ class ClientDetailDialog(QDialog):
         self.payment_table.setRowCount(len(payments))
         for row, p in enumerate(payments):
             paid_at = datetime.fromisoformat(p["paid_at"])
-            self.payment_table.setItem(row, 0, QTableWidgetItem(paid_at.strftime("%Y-%m-%d %H:%M")))
+            self.payment_table.setItem(row, 0, QTableWidgetItem(format_full_datetime(paid_at)))
             self.payment_table.setItem(row, 1, QTableWidgetItem(f"${p['amount']:.2f}"))
             self.payment_table.setItem(row, 2, QTableWidgetItem(p["method"]))
             self.payment_table.setItem(row, 3, QTableWidgetItem(p["notes"] or ""))
