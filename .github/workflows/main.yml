@@ -1,0 +1,21 @@
+name: Run Batch File
+
+# Allows you to run this workflow manually from the Actions tab
+on:
+  workflow_dispatch:
+
+jobs:
+  execute-bat:
+    # Crucial: Batch files need a Windows environment to run natively
+    runs-on: windows-latest
+
+    steps:
+    # Step 1: Check out the repository code onto the virtual machine
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    # Step 2: Run the batch file using the Windows Command Prompt (cmd)
+    - name: Run run_test_mode.bat
+      shell: cmd
+      run: |
+        run.bat
