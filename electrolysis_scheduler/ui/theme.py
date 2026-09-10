@@ -3,6 +3,10 @@
 Applied once in main.py before any windows are constructed.
 """
 
+from PySide6.QtCore import QEvent, QObject
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QGraphicsDropShadowEffect, QPushButton
+
 STYLESHEET = """
 * {
     font-family: "Segoe UI", sans-serif;
@@ -204,6 +208,39 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
 """
 
 
+class _ButtonShadowFilter(QObject):
+    """Qt's style sheets have no box-shadow property, so a raised look for
+    buttons has to come from a QGraphicsDropShadowEffect set in code instead
+    - this app-wide event filter (installed once on the QApplication, so it
+    sees every widget's events) attaches one to each QPushButton the first
+    time it's shown, rather than needing every button construction site
+    across the app to set it up individually. Disabled buttons already read
+    as flat/inactive from the QSS colors alone, so their shadow is kept
+    switched off to match - toggled back on if they're re-enabled later."""
+
+    _BLUR_RADIUS = 10
+    _Y_OFFSET = 2
+    _COLOR = QColor(15, 23, 42, 70)  # slate-900, ~27% alpha
+
+    def eventFilter(self, obj, event):
+        event_type = event.type()
+        if isinstance(obj, QPushButton) and event_type in (QEvent.Show, QEvent.EnabledChange):
+            effect = obj.graphicsEffect()
+            if effect is None:
+                effect = QGraphicsDropShadowEffect(obj)
+                effect.setBlurRadius(self._BLUR_RADIUS)
+                effect.setOffset(0, self._Y_OFFSET)
+                effect.setColor(self._COLOR)
+                obj.setGraphicsEffect(effect)
+            effect.setEnabled(obj.isEnabled())
+        return False
+
+
 def apply_theme(app):
     app.setStyle("Fusion")
     app.setStyleSheet(STYLESHEET)
+    # Kept alive as an attribute on `app` - installEventFilter doesn't hold
+    # a Python reference, so without this the filter would be garbage
+    # collected right after this function returns.
+    app._button_shadow_filter = _ButtonShadowFilter(app)
+    app.installEventFilter(app._button_shadow_filter)
