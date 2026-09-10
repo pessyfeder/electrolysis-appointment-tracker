@@ -346,7 +346,7 @@ class AppointmentDialog(QDialog):
         self.time_combo.setModel(model)
 
         target = initial_dt if initial_dt is not None else earliest
-        idx = self.time_combo.findData(target) if target is not None else -1
+        idx = self._find_time_index(target) if target is not None else -1
         if idx < 0:
             idx = self._first_selectable_time_index()
         if idx >= 0:
@@ -368,6 +368,16 @@ class AppointmentDialog(QDialog):
     def _first_selectable_time_index(self):
         for i in range(self.time_combo.count()):
             if self.time_combo.itemData(i, Qt.UserRole) is not None:
+                return i
+        return -1
+
+    def _find_time_index(self, target):
+        # QComboBox.findData() doesn't reliably match a plain Python object
+        # (like datetime) stored via Qt.UserRole - it always misses even an
+        # equal value - so the target time has to be located with a manual
+        # scan instead, comparing itemData directly with Python's own `==`.
+        for i in range(self.time_combo.count()):
+            if self.time_combo.itemData(i, Qt.UserRole) == target:
                 return i
         return -1
 
