@@ -831,7 +831,7 @@ class CalendarView(QWidget):
         outer.addWidget(toolbar_card)
 
         self.next_available_label = ClickableLabel("")
-        self.next_available_label.setAlignment(Qt.AlignCenter)
+        self.next_available_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.next_available_label.setCursor(Qt.PointingHandCursor)
         self.next_available_label.setStyleSheet(
             "background: #eff6ff; color: #1d4ed8; font-weight: 600; "

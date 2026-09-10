@@ -5,7 +5,7 @@ from ui.calendar_view import CalendarView
 from ui.billing_view import BillingView
 from ui.admin_view import AdminView
 from ui.login_dialog import prompt_admin_reauth
-from ui.frameless import FramelessTitleBar, ResizeGrips
+from ui.frameless import FramelessTitleBar, ResizeGrips, make_app_icon
 
 
 class MainWindow(QMainWindow):
@@ -25,22 +25,22 @@ class MainWindow(QMainWindow):
         # always exactly as wide as the current content needs.
         self.setMinimumHeight(600)
 
-        # Frameless: the native title bar/border is replaced below with a
-        # custom one, so this window looks and behaves consistently instead
-        # of picking up whatever accent color the OS window chrome happens
-        # to be themed with.
+        # Frameless: the native title bar is replaced below with a plain
+        # white draggable strip (no title text/icon) instead of whatever
+        # accent color the OS happens to theme native title bars with.
         self.setWindowFlag(Qt.FramelessWindowHint)
 
         central = QWidget()
         central.setObjectName("appFrame")
         central.setAttribute(Qt.WA_StyledBackground, True)
-        central.setStyleSheet("#appFrame { border: 1px solid #334155; }")
+        central.setStyleSheet("#appFrame { border: 1px solid #e5e7eb; }")
         outer = QVBoxLayout(central)
         outer.setContentsMargins(1, 1, 1, 1)
         outer.setSpacing(0)
 
         self.title_bar = FramelessTitleBar(
-            self, "Electrolysis Scheduler", show_minimize=True, show_maximize=True
+            self, "Electrolysis Scheduler", show_minimize=True, show_maximize=True,
+            icon=make_app_icon(), height=40,
         )
         outer.addWidget(self.title_bar)
 
@@ -99,6 +99,7 @@ class MainWindow(QMainWindow):
             # grips sit right where Windows already treats the top edge as
             # "restore" territory - keep them enabled only while normal.
             self._resize_grips.set_active(not self.isMaximized())
+            self.title_bar.sync_maximized()
 
     def require_admin(self) -> bool:
         # Every admin-gated action (the Admin tab, editing business hours,

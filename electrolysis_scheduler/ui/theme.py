@@ -28,7 +28,7 @@ QToolTip {
 
 /* ---- Tabs ---- */
 QTabWidget::pane {
-    border: 1px solid #cbd5e1;
+    border: 1px solid #94a3b8;
     background: #ffffff;
     border-radius: 6px;
     top: -1px;
@@ -38,7 +38,7 @@ QTabBar::tab {
     color: #64748b;
     padding: 8px 18px;
     margin-right: 2px;
-    border: 1px solid #cbd5e1;
+    border: 1px solid #94a3b8;
     border-bottom: 2px solid transparent;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
@@ -91,7 +91,7 @@ QPushButton:default:pressed, QPushButton#primaryButton:pressed {
 /* ---- Inputs ---- */
 QLineEdit, QTextEdit, QPlainTextEdit, QDoubleSpinBox, QSpinBox, QDateEdit, QComboBox {
     background: #ffffff;
-    border: 1px solid #cbd5e1;
+    border: 1px solid #94a3b8;
     border-radius: 6px;
     padding: 5px 8px;
     selection-background-color: #bfdbfe;
@@ -101,23 +101,23 @@ QSpinBox:focus, QDateEdit:focus, QComboBox:focus {
     border: 1px solid #2563eb;
 }
 QComboBox::drop-down {
-    border-left: 1px solid #cbd5e1;
+    border-left: 1px solid #94a3b8;
     width: 22px;
 }
 QComboBox QAbstractItemView {
     background: #ffffff;
-    border: 1px solid #cbd5e1;
+    border: 1px solid #94a3b8;
     selection-background-color: #dbeafe;
     selection-color: #1e293b;
     outline: none;
 }
 QDateEdit::drop-down {
-    border-left: 1px solid #cbd5e1;
+    border-left: 1px solid #94a3b8;
     width: 22px;
 }
 QSpinBox::up-button, QSpinBox::down-button,
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
-    border-left: 1px solid #cbd5e1;
+    border-left: 1px solid #94a3b8;
     width: 18px;
 }
 QCheckBox {
@@ -126,7 +126,7 @@ QCheckBox {
 QCheckBox::indicator {
     width: 15px;
     height: 15px;
-    border: 1px solid #cbd5e1;
+    border: 1px solid #94a3b8;
     border-radius: 4px;
     background: #ffffff;
 }
@@ -145,7 +145,7 @@ QCheckBox::indicator:disabled {
 /* ---- Lists / tables ---- */
 QListWidget, QTableWidget {
     background: #ffffff;
-    border: 1px solid #cbd5e1;
+    border: 1px solid #94a3b8;
     border-radius: 6px;
     gridline-color: #f1f5f9;
     alternate-background-color: #f8fafc;
@@ -169,7 +169,7 @@ QHeaderView::section {
 
 /* ---- Group boxes ---- */
 QGroupBox {
-    border: 1px solid #cbd5e1;
+    border: 1px solid #94a3b8;
     border-radius: 6px;
     margin-top: 22px;
     padding-top: 12px;
@@ -203,7 +203,7 @@ QMenuBar::item:selected {
 }
 QMenu {
     background: #ffffff;
-    border: 1px solid #cbd5e1;
+    border: 1px solid #94a3b8;
 }
 QMenu::item {
     padding: 6px 20px;
@@ -225,7 +225,7 @@ QScrollArea {
 }
 QSplitter::handle {
     background: #e2e8f0;
-    border: 1px solid #cbd5e1;
+    border: 1px solid #94a3b8;
 }
 QSplitter::handle:horizontal {
     width: 5px;
@@ -275,9 +275,9 @@ class _ButtonShadowFilter(QObject):
     as flat/inactive from the QSS colors alone, so their shadow is kept
     switched off to match - toggled back on if they're re-enabled later."""
 
-    _BLUR_RADIUS = 10
-    _Y_OFFSET = 2
-    _COLOR = QColor(15, 23, 42, 70)  # slate-900, ~27% alpha
+    _BLUR_RADIUS = 5
+    _Y_OFFSET = 1
+    _COLOR = QColor(15, 23, 42, 40)  # slate-900, ~16% alpha
 
     def eventFilter(self, obj, event):
         event_type = event.type()

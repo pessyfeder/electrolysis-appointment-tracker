@@ -672,11 +672,11 @@ class AppointmentDialog(QDialog):
 
         frame = QFrame()
         frame.setObjectName("ticketFrame")
-        frame.setStyleSheet("#ticketFrame { background: #f8fafc; border: 1px solid #334155; }")
+        frame.setStyleSheet("#ticketFrame { background: #f8fafc; border: 1px solid #e5e7eb; }")
         frame_layout = QVBoxLayout(frame)
         frame_layout.setContentsMargins(0, 0, 0, 0)
         frame_layout.setSpacing(0)
-        frame_layout.addWidget(FramelessTitleBar(dlg, "Appointment Scheduled"))
+        frame_layout.addWidget(FramelessTitleBar(dlg))
 
         content = QWidget()
         v = QVBoxLayout(content)
@@ -718,6 +718,25 @@ class AppointmentDialog(QDialog):
             notes_label.setWordWrap(True)
             notes_label.setStyleSheet("font-size: 10pt; color: #334155;")
             card_layout.addWidget(notes_label)
+
+        # Contact/policy reminder - the phone number is whichever client(s)
+        # on this appointment actually have one on file, not a fixed
+        # business number, since it's telling the client where *they'll*
+        # be reached if something changes.
+        phones = []
+        for c in self._clients:
+            p = format_phone(c.get("phone"))
+            if p and p not in phones:
+                phones.append(p)
+        policy_text = "Rescheduling or cancellations must be done at least 24 hours in advance."
+        if phones:
+            policy_text = f"If anything changes, we will reach you at {', '.join(phones)}. " + policy_text
+        policy_label = QLabel(policy_text)
+        policy_label.setWordWrap(True)
+        policy_label.setStyleSheet(
+            "font-size: 9pt; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 8px;"
+        )
+        card_layout.addWidget(policy_label)
 
         v.addWidget(card)
 
@@ -788,5 +807,12 @@ class AppointmentDialog(QDialog):
             # slot has nowhere new to jump to.
             self.saved_start_dt = start_dt
             self.saved_end_dt = end_dt
+            # Hide this dialog (an existing appointment being rescheduled,
+            # or a brand-new one) before the ticket pops up, instead of
+            # leaving it sitting open underneath for the whole time the
+            # ticket is shown - the ticket already restates everything this
+            # window had on it, so there's nothing left for it to still be
+            # open for.
+            self.hide()
             self._show_ticket(start_dt, end_dt, notes)
         self.accept()
