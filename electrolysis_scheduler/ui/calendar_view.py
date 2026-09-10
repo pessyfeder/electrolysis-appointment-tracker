@@ -347,6 +347,7 @@ class TimeGridWidget(QWidget):
                 for c_start, c_end in cluster_spans:
                     gap_min += max(0.0, (c_start - prev_end).total_seconds() / 60)
                     prev_end = c_end
+                gap_min += max(0.0, (block_end - prev_end).total_seconds() / 60)
                 available_for_slots = body.height() - gap_min * self._px_per_min
                 slot_heights = self._flex_slot_heights(
                     [(ce - cs).total_seconds() / 60 for cs, ce in cluster_spans],
@@ -385,18 +386,22 @@ class TimeGridWidget(QWidget):
                         rel_offset = (s - c_start).total_seconds() / 60
                         rel_dur = (e - s).total_seconds() / 60
                         y = y_cursor + (rel_offset / span_min) * h_flexed
-                        if len(self.columns) == 1:
-                            h = max(6.0, (rel_dur / span_min) * h_flexed)
-                        else:
-                            # Week view: a chip is a small marker at the
-                            # appointment's start time, not a bar spanning
-                            # its whole duration - stretching it long just
-                            # ate space a short appointment doesn't need, so
-                            # every chip here is only as tall as its text
-                            # requires, regardless of how long the
-                            # appointment actually runs.
-                            h = min(self._min_chip_height(), h_flexed)
-                        rect = QRectF(x + 1, y + 1, cell_w - 2, h - 2)
+                        # Both views now stretch a chip to its actual
+                        # duration (week view used to draw a fixed-height
+                        # marker regardless of length) - so two
+                        # back-to-back appointments (0-minute gap) fill
+                        # right up to each other with no dead space
+                        # between them, and a longer appointment visibly
+                        # takes up more room than a short one.
+                        h = max(6.0, (rel_dur / span_min) * h_flexed)
+                        # No vertical inset: with one applied per rect, two
+                        # back-to-back chips would each lose a couple of
+                        # pixels off their touching edge, leaving a visible
+                        # gap between two appointments that are actually
+                        # scheduled with zero gap. The horizontal inset is
+                        # unaffected - that's spacing between *simultaneous*
+                        # appointments side by side, a separate case.
+                        rect = QRectF(x + 1, y, cell_w - 2, h)
                         self._appt_layout.append((rect, a))
                     y_cursor += h_flexed
                     prev_end = c_end
@@ -811,6 +816,11 @@ class CalendarView(QWidget):
         search_btn.clicked.connect(self._open_search)
         _never_shrink(search_btn)
         toolbar.addWidget(search_btn)
+
+        find_slot_btn = QPushButton("🕒 Search Available Time Slot")
+        find_slot_btn.clicked.connect(self._open_availability_search)
+        _never_shrink(find_slot_btn)
+        toolbar.addWidget(find_slot_btn)
 
         add_btn = QPushButton("📅 Schedule Appointment")
         add_btn.setObjectName("primaryButton")
@@ -1286,6 +1296,21 @@ class CalendarView(QWidget):
             fresh = models.get_appointment(appt["id"])
             if fresh:
                 self._open_appointment(fresh)
+
+    def _open_availability_search(self):
+        from ui.availability_search_dialog import AvailabilitySearchDialog
+        dlg = AvailabilitySearchDialog(self)
+        if dlg.exec() and dlg.selected_date:
+            # Hands off to Day view rather than opening the booking dialog
+            # straight from here - same "browse the day, then click an open
+            # slot to book" flow every other entry point into booking uses,
+            # instead of a third, different way to book.
+            self.anchor_date = dlg.selected_date
+            self.mode = "day"
+            self.day_btn.blockSignals(True)
+            self.day_btn.setChecked(True)
+            self.day_btn.blockSignals(False)
+            self.refresh()
 
     def _open_appointment(self, appt_row, start_dt=None):
         from ui.appointment_dialog import AppointmentDialog
