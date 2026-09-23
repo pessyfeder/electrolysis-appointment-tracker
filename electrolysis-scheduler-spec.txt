@@ -1,21 +1,30 @@
 ELECTROLYSIS APPOINTMENT SCHEDULER - SPEC DOC
 
 Prepared for: Pessy Friedman
-Date: September 16, 2026
-Status: Draft v8.0 - revised after v7 build feedback (database backup/
-restore, a consolidated payment report and no-show billing, a duration-
-first appointment-booking flow with a coarser 15-minute start-time grid,
-a new "Search Available Time Slot" calendar, and a lighter, Claude-
-Desktop-style window chrome)
+Date: September 23, 2026
+Status: Draft v9.0 - adds a touch/tablet usability pass (kinetic
+scrolling, a tap-friendly time picker, larger touch targets on the
+calendar and window chrome, single-tap alternatives alongside existing
+double-click actions) on top of v8.0's database backup/restore,
+consolidated payment report, no-show billing, duration-first booking
+flow, "Search Available Time Slot" calendar, and lighter window chrome
 
 ================================================================
 
 1. OVERVIEW
 
-A desktop application for a solo electrolysis practitioner (Mom) to
-manage appointment scheduling, client contact/payment records, and
-business-hour enforcement - running entirely locally on one computer,
-with no cloud backup and no email/SMS integration.
+A desktop application (built with a Windows desktop GUI framework,
+PySide6/Qt - see Section 4) for a solo electrolysis practitioner (Mom)
+to manage appointment scheduling, client contact/payment records, and
+business-hour enforcement - running entirely locally, with no cloud
+backup and no email/SMS integration. It is deployed on a Windows touch
+tablet at the front desk (see Phase 9) rather than a mouse-and-keyboard
+desktop/laptop; "desktop application" describes how it's built and
+runs (a native Windows program, not a mobile/tablet-store app), not the
+hardware it's actually used on. The app itself is unchanged code
+running on tablet hardware, with touch-friendly adaptations layered on
+top of what was originally a mouse/keyboard-first design - entirely
+offline either way.
 
 This document is written to be used by Pessy to build the application.
 It defines scope, data model, features, and technical decisions in
@@ -54,7 +63,10 @@ Non-Goals (out of scope for v1):
 - Online client self-booking (client-facing web portal).
 - Full clinical/EMR-grade treatment charting (body maps, photos) - can
   be a future phase.
-- Mobile app version.
+- Mobile app version - the app runs on a Windows tablet (Phase 9), but
+  that's the same Windows desktop program on tablet hardware, not a
+  native iOS/Android rewrite; that native-mobile route remains out of
+  scope.
 - Insurance billing/claims.
 - Email or SMS reminders/notifications of any kind.
 - Cloud backup or cloud sync of any kind - data lives only on the local
@@ -67,7 +79,9 @@ Non-Goals (out of scope for v1):
 One person: a solo electrolysis practitioner (Mom) who both performs
 treatments and manages her own front-desk work (scheduling, billing).
 She needs the app to be simple, reliable, and low-maintenance - not an
-enterprise practice-management system.
+enterprise practice-management system. Her device is a Windows touch
+tablet (see Phase 9) - there is no separate desktop/laptop install to
+keep in sync with it.
 
 ================================================================
 
@@ -660,6 +674,16 @@ General UX notes:
 - Every form marks which fields are required ("*", shown in red, with a
   legend) vs. optional (stated once, in the field's label) - never left
   ambiguous, and never stated as optional in two places at once.
+- Touch-friendly throughout (see Phase 9 for the full list): anywhere an
+  action was reachable only by double-clicking a row (Billing's client
+  balances, Search Appointment's results) there's now also an explicit
+  single-tap button, alongside the still-available double-click; time
+  fields (Block Time Off, Edit Business Hours) open a large tap-friendly
+  hour/minute/AM-PM picker instead of relying on small spin arrows;
+  scrollable lists and tables support kinetic (flick) scrolling; and key
+  touch targets - the calendar's prev/next arrows, the window's minimize/
+  maximize/close buttons, the frameless window's edge-resize grab area -
+  are sized and spaced for a fingertip, not just a mouse cursor.
 
 ================================================================
 
@@ -947,6 +971,50 @@ Window Chrome Redesign (this revision)
   subtle drop shadow; borders on tabs, checkboxes, dropdowns, table
   headers, menus, and splitters were sharpened and darkened for better
   contrast against the lighter chrome above.
+
+Phase 9 - Touch/Tablet Usability Pass
+- The app's deployment moved from a mouse-and-keyboard desktop/laptop to
+  a Windows touch tablet as the sole device - the app itself is still a
+  Windows desktop application (PySide6/Qt, see Section 4), unchanged in
+  what it does, just running on tablet hardware. This phase retrofits
+  touch-friendly alternatives to interactions that assumed a mouse,
+  rather than removing mouse/keyboard support outright (a mouse still
+  works fine on the tablet, e.g. if one is ever plugged in) - nothing
+  here changes what the app does, only how it can be operated.
+- Client Detail (Billing's client-balances list) and Search Appointment's
+  results, previously reachable only by double-clicking a row, now also
+  have an explicit "View Details" / "Open" button (enabled once a row is
+  selected) alongside the still-available double-click.
+- Block Time Off's and Edit Business Hours' time fields now open a tap-
+  friendly popup (large hour / 5-minute-increment minute / AM-PM lists)
+  instead of relying on the small up/down spin arrows a plain time field
+  normally has to nudge a value - the field itself is click/tap-only,
+  matching the existing date-field picker's behavior.
+- Kinetic (flick) scrolling was added to every scrollable list/table
+  (Billing's client balances, Client Detail's appointment/payment
+  history, Search Appointment's results, Day view's appointment list,
+  and the Search Available Time Slot grid), which previously only
+  supported a precise mouse-drag scrollbar.
+- Touch targets were enlarged: the calendar's prev/next navigation
+  arrows and the window's minimize/maximize/close buttons are now at
+  least 44x44px (previously ~34px), with extra spacing added before the
+  close button specifically to reduce accidental taps; the frameless
+  window's edge/corner resize grab area was widened from 6px to 16px.
+- Right-clicking an empty calendar slot to block it off (7.1/7.4) remains
+  mouse-only for now. A touch-first alternative was tried - first a
+  press-and-hold gesture, then a dedicated toolbar button - and removed
+  after evaluation; blocking time off from a tablet goes through Admin >
+  Block Time Off instead.
+- Pinch-to-zoom (scaling the calendar, or the whole app, via a two-finger
+  gesture) was evaluated and not adopted: Windows' own display-scaling
+  setting already covers "make everything bigger" system-wide, and
+  wrapping the app's widgets in a zoomable container introduced real
+  layout/sizing issues (clipped content, popups needing separate
+  handling) without a clear benefit over that existing OS setting.
+- Install notes call out one required one-time Windows setting for
+  tablet use (enabling the touch keyboard to auto-appear when a typed
+  field gets focus), plus a manual "Touch keyboard" taskbar-icon fallback
+  for any field that doesn't trigger it automatically.
 
 ================================================================
 
