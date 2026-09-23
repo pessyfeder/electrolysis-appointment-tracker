@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 from app import models
 from app.util import format_12h, format_client_name
 from ui.calendar_view import STATUS_STYLES, STATUS_LABELS
-from ui.widgets import ClickToOpenDateEdit
+from ui.widgets import ClickToOpenDateEdit, enable_touch_scroll
 
 
 class AppointmentSearchDialog(QDialog):
@@ -49,14 +49,21 @@ class AppointmentSearchDialog(QDialog):
             "QListWidget::item:selected { background: #eff6ff; }"
         )
         self.results_list.itemDoubleClicked.connect(self._on_item_chosen)
+        self.results_list.currentItemChanged.connect(self._update_open_enabled)
+        enable_touch_scroll(self.results_list)
         layout.addWidget(self.results_list, 1)
 
-        hint = QLabel("Double-click a result to open it.")
+        hint = QLabel("Select a result and tap Open (or double-click it).")
         hint.setStyleSheet("color: #64748b; font-size: 9pt;")
         layout.addWidget(hint)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
+        self.open_btn = QPushButton("Open")
+        self.open_btn.setObjectName("primaryButton")
+        self.open_btn.setEnabled(False)
+        self.open_btn.clicked.connect(self._open_selected)
+        btn_row.addWidget(self.open_btn)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
         btn_row.addWidget(close_btn)
@@ -132,3 +139,11 @@ class AppointmentSearchDialog(QDialog):
         if appt:
             self.selected_appt = appt
             self.accept()
+
+    def _update_open_enabled(self, current, _previous=None):
+        self.open_btn.setEnabled(bool(current and current.data(Qt.UserRole)))
+
+    def _open_selected(self):
+        item = self.results_list.currentItem()
+        if item:
+            self._on_item_chosen(item)

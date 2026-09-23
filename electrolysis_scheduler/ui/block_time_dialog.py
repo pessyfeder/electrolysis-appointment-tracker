@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, time
 
 from PySide6.QtWidgets import (
-    QDialog, QWidget, QVBoxLayout, QFormLayout, QTimeEdit, QCheckBox,
+    QDialog, QWidget, QVBoxLayout, QFormLayout, QCheckBox,
     QTextEdit, QPushButton, QHBoxLayout, QMessageBox
 )
 from PySide6.QtCore import QDate, QTime
@@ -9,7 +9,8 @@ from PySide6.QtCore import QDate, QTime
 from app import models
 from app.util import format_client_name
 from ui.widgets import (
-    ClickToOpenDateEdit, required_label, required_hint_label, ADMIN_FORM_COLUMN_WIDTH
+    ClickToOpenDateEdit, ClickToOpenTimeEdit, required_label, required_hint_label,
+    ADMIN_FORM_COLUMN_WIDTH
 )
 
 
@@ -44,9 +45,9 @@ class BlockTimeForm(QWidget):
         self.full_day_check = QCheckBox("Block the entire day")
         form.addRow("", self.full_day_check)
 
-        self.start_time_edit = QTimeEdit()
+        self.start_time_edit = ClickToOpenTimeEdit()
         self.start_time_edit.setDisplayFormat("h:mm AP")
-        self.end_time_edit = QTimeEdit()
+        self.end_time_edit = ClickToOpenTimeEdit()
         self.end_time_edit.setDisplayFormat("h:mm AP")
         form.addRow(required_label("From:"), self.start_time_edit)
         form.addRow(required_label("To:"), self.end_time_edit)

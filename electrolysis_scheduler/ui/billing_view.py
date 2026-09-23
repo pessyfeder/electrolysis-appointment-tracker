@@ -81,16 +81,25 @@ class BillingView(QWidget):
 
         balances_box, balances_layout = make_card("Client Balances")
         balances_hint = QLabel(
-            "Double-click a client for balance, full history, and archive (admin password required)."
+            "Select a client and tap View Details for balance, full history, and archive "
+            "(admin password required)."
         )
         balances_hint.setWordWrap(True)
         balances_hint.setStyleSheet("color: #64748b;")
         balances_layout.addWidget(balances_hint)
         self.balances_table = QTableWidget(0, 3)
         self.balances_table.setHorizontalHeaderLabels(["Client", "Balance", "Notes"])
+        self.balances_table.setSelectionBehavior(QTableWidget.SelectRows)
         style_history_table(self.balances_table, stretch_column=2)
         self.balances_table.itemDoubleClicked.connect(self._open_client_detail)
+        self.balances_table.itemSelectionChanged.connect(self._update_view_details_enabled)
         balances_layout.addWidget(self.balances_table)
+
+        self.view_details_btn = QPushButton("View Details")
+        self.view_details_btn.setEnabled(False)
+        self.view_details_btn.clicked.connect(self._open_client_detail_from_selection)
+        balances_layout.addWidget(self.view_details_btn)
+
         right.addWidget(balances_box, 1)
 
         # Payment report - viewing it opens a large, dedicated popup window
@@ -170,8 +179,19 @@ class BillingView(QWidget):
             notes = "No Show" if models.client_has_no_show(c["id"]) else ""
             self.balances_table.setItem(row, 2, QTableWidgetItem(notes))
 
+    def _update_view_details_enabled(self):
+        self.view_details_btn.setEnabled(bool(self.balances_table.selectedItems()))
+
     def _open_client_detail(self, item):
-        row = item.row()
+        self._open_client_detail_for_row(item.row())
+
+    def _open_client_detail_from_selection(self):
+        rows = self.balances_table.selectionModel().selectedRows()
+        if not rows:
+            return
+        self._open_client_detail_for_row(rows[0].row())
+
+    def _open_client_detail_for_row(self, row):
         client_id = self.balances_table.item(row, 0).data(Qt.UserRole)
         if not client_id or not self.require_admin():
             return

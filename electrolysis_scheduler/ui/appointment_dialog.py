@@ -12,7 +12,7 @@ from app import models, scheduling, billing
 from app.util import format_12h, format_client_name, format_phone, format_duration_minutes
 from ui.client_dialog import ClientDialog
 from ui.widgets import ClickToOpenDateEdit, open_dropdown_on_click, required_label, required_hint_label
-from ui.frameless import FramelessTitleBar
+from ui.frameless import FramelessTitleBar, enable_rounded_corners
 
 def _center_over_parent(dlg, parent):
     """Positions a freshly-constructed child dialog directly over its parent

@@ -69,12 +69,12 @@ class LoginDialog(QDialog):
                 self.password_edit.setFocus()
 
 
-def prompt_admin_reauth(parent) -> bool:
+def prompt_admin_reauth(parent, message=None) -> bool:
     """Used for the second password gate when editing time availability (spec 7.4)."""
     from PySide6.QtWidgets import QInputDialog
     pw, ok = QInputDialog.getText(
         parent, "Enter Admin Password",
-        "Enter Admin Password:",
+        message or "Enter Admin Password:",
         QLineEdit.Password,
     )
     if not ok:

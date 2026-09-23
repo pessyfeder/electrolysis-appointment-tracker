@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 from app import scheduling
 from app.util import format_duration_minutes
 from ui.availability_grid import AvailabilityGridWidget
+from ui.widgets import enable_touch_scroll
 
 # "Upcoming two weeks" by default; "Show More" steps through these in order,
 # hiding the button once the last (longest) tier is reached - spec calls out
@@ -46,6 +47,7 @@ class AvailabilitySearchDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
         scroll.setWidget(self.grid)
+        enable_touch_scroll(scroll)
         layout.addWidget(scroll, 1)
 
         legend = QHBoxLayout()

@@ -1,12 +1,12 @@
 ELECTROLYSIS APPOINTMENT SCHEDULER - SPEC DOC
 
 Prepared for: Pessy Friedman
-Date: September 3, 2026
-Status: Draft v7.0 - revised after v6 build feedback (per-date business-
-hours overrides replacing weekly-only editing, appointment search, an
-auto-fitting calendar that no longer needs a maximized window or
-scrolling, automatic no-show detection, and a restyled Admin/Billing/
-Client Detail UI)
+Date: September 16, 2026
+Status: Draft v8.0 - revised after v7 build feedback (database backup/
+restore, a consolidated payment report and no-show billing, a duration-
+first appointment-booking flow with a coarser 15-minute start-time grid,
+a new "Search Available Time Slot" calendar, and a lighter, Claude-
+Desktop-style window chrome)
 
 ================================================================
 
@@ -233,6 +233,21 @@ SQLite schema (v3):
   and/or an exact date and jumps straight to it (opens Day view on that
   date with the appointment's own dialog open), rather than requiring
   Admin to scrub through the calendar to find one client's booking.
+- A separate "Search Available Time Slot" button (next to Search
+  Appointment on the toolbar) opens a small calendar of its own for
+  finding an *open* slot rather than an existing booking: Admin first
+  picks a session length from a dropdown, then sees a month-style grid
+  (Sun-Sat columns) covering the upcoming 14 days by default, with each
+  in-range day tinted green and labeled "Open" if that day has at least
+  one bookable start time long enough for the chosen session, or gray
+  and labeled "Full" otherwise. A "Show More" button widens the range in
+  steps (upcoming month, then further) until every remaining tier has
+  been shown; changing the session length resets the range back to the
+  first (14-day) tier. Clicking any green/open day closes this dialog
+  and switches the main calendar to Day view on that date - it does not
+  jump straight into the booking form, so Admin still clicks the actual
+  open slot on the day grid to schedule it, same as any other entry
+  point into booking.
 - Clicking a day on the month grid jumps to the day view for that date.
   Past days are grayed out and their empty time is not clickable - you
   can't create a new appointment on a date that's already gone. Existing
@@ -256,38 +271,52 @@ SQLite schema (v3):
   appointment; select an existing client, quick-add a new one inline, or
   attach more than one client to the same slot (see "Multiple clients
   per appointment" below).
-- Appointment form fields: one or more clients, date/time, duration (or
-  end time), appointment notes (optional), status (per client - see
-  below). Price is calculated automatically per client (7.3), not typed
-  in. Required fields are marked with "*" (with a "* Required" legend on
-  the form); fields that aren't required say so in their label, e.g.
-  "Notes (optional)" - never both a label and a placeholder saying the
-  same thing.
+- Appointment form fields, in the order Admin fills them in - duration,
+  then date, then start time - one or more clients, appointment notes
+  (optional), status (per client - see below). Price is calculated
+  automatically per client (7.3), not typed in. Required fields are
+  marked with "*" (with a "* Required" legend on the form); fields that
+  aren't required say so in their label, e.g. "Notes (optional)" - never
+  both a label and a placeholder saying the same thing.
+    - Duration is chosen first, from a generic list of options in
+      5-minute steps starting at 15 minutes and going up to the longest
+      single business-hours block that exists anywhere in the default
+      weekly schedule (e.g. a 3-hour evening block) - this list doesn't
+      depend on a date or start time yet, since neither has been picked.
+      Durations of an hour or longer display as e.g. "1 hour 15 minutes"
+      rather than "75 min".
     - Clicking anywhere on the date field (not just its small calendar
       icon) pops up the calendar picker. Dates before today are grayed
       out and can't be selected - whenever the date is still editable,
       not just for a brand-new appointment (see the "locked once started"
       rule below - a reschedule of a not-yet-started future appointment
-      is still subject to this same past-date lockout).
+      is still subject to this same past-date lockout). Whether a date is
+      selectable also depends on the duration already chosen - a date
+      with no business-hours block long enough to fit that duration
+      anywhere is grayed out too, even if the date itself would otherwise
+      be open.
     - The start time is never typed in. Clicking the start-time field
-      opens a dropdown listing every start time, in 5-minute intervals,
-      on the selected date where a booking is actually possible -
-      respecting business hours (including any per-date override, see
-      below), existing appointments, and the gap rule below - with the
-      earliest one marked. Times are grouped under non-selectable
-      "Morning Appointments" / "Evening Appointments" headings, each
-      labeled with that block's actual hours for the selected date (e.g.
-      "Evening Appointments (7:30 PM - 10:30 PM)"), rather than shown as
-      one flat list. Picking an entry displays it in the field; that's
-      the only way to set it.
-    - Duration is chosen from a list of valid options in 5-minute steps,
-      starting at 15 minutes and going up to (business-hours block end
-      time - appointment start time). The list automatically excludes any
-      duration that would overlap the next appointment or leave an
-      unbookable 1-14 minute gap before it (see the gap rule below), so
-      it's not possible to pick an invalid duration in the first place.
-      Durations of an hour or longer display as e.g. "1 hour 15 minutes"
-      rather than "75 min".
+      opens a dropdown listing every start time, on 15-minute intervals,
+      on the selected date where the already-chosen duration can actually
+      fit - respecting business hours (including any per-date override,
+      see below), existing appointments, and the gap rule below - with
+      the earliest one marked. An exact boundary that falls off the
+      15-minute grid (e.g. right at another appointment's end time, or
+      right at a business-hours block's close) is still always offered as
+      an extra option, so back-to-back booking is never accidentally
+      excluded just because it doesn't land on a quarter-hour. Times are
+      grouped under non-selectable "Morning Appointments" / "Evening
+      Appointments" headings, each labeled with that block's actual hours
+      for the selected date (e.g. "Evening Appointments (7:30 PM - 10:30
+      PM)"), rather than shown as one flat list. Picking an entry
+      displays it in the field; that's the only way to set it. Changing
+      the duration after a start time was already picked re-filters the
+      whole start-time list from scratch. If the chosen duration has no
+      valid start time at all on the selected date, the dropdown shows a
+      single disabled row saying so (e.g. "No available start times for a
+      1 hour session") instead of appearing empty; trying to save with no
+      start time selected shows a popup explaining that this duration
+      doesn't fit that date and to pick a different duration or date.
 - Multiple clients per appointment: a single calendar slot can have more
   than one client attached (e.g. a parent and child booked together).
   They are still treated - and billed - one at a time: Start Session on
@@ -315,9 +344,15 @@ SQLite schema (v3):
   is reopened.
 - App auto-suggests the next available slot / a gap between two booked
   slots by flashing it.
-- Successfully scheduling or rescheduling an appointment shows a brief
-  confirmation "ticket" (client name(s), date, time, and notes) as a
-  final on-screen recap before the form closes.
+- Successfully scheduling or rescheduling an appointment hides the
+  appointment form and shows a brief confirmation "ticket" (client
+  name(s), date, time, and notes) as a final on-screen recap. The ticket
+  also reminds the client(s) how they'll be reached if plans change and
+  states the cancellation policy - "If anything changes, we will reach
+  you at (XXX) XXX-XXXX[, ...]. Rescheduling or cancellations must be
+  done at least 24 hours in advance." (the phone number(s) shown are
+  whichever attached client(s) actually have one on file; if none do, the
+  policy sentence still shows on its own).
 - A client left "Scheduled" on an appointment whose business-hours block
   has already ended, without their session ever having been started, is
   automatically promoted to "No-Show" the next time appointment data is
@@ -356,10 +391,10 @@ SQLite schema (v3):
       if it's 0 minutes (back-to-back) or 15+ minutes. This same rule
       also applies against a business-hours block's own open/close time:
       a start time that would leave a 1-14 minute idle gap right after
-      the block opens, or a duration that would leave one right before
-      the block closes, is likewise excluded from the start-time/
-      duration options offered - so this is enforced entirely by keeping
-      such choices out of those lists in the first place, never by
+      the block opens, or right before it closes given the chosen
+      duration, is likewise excluded from the start-time options offered
+      once duration and date are picked - so this is enforced entirely by
+      keeping such choices out of that list in the first place, never by
       rejecting a choice after it's already been offered and picked.
     - Appointments cannot be booked inside a blocked time slot/day.
 
@@ -377,7 +412,8 @@ SQLite schema (v3):
 - Client detail view: contact info (name, phone), full appointment
   history, full payment history, running balance (charged minus paid -
   positive means the client owes money, negative means the client has a
-  credit toward future visits).
+  credit toward future visits; a no-show charge, see 7.3, counts toward
+  what's charged same as a completed session does).
 - Add/edit/archive clients (archive instead of hard delete, to preserve
   appointment/payment history integrity).
 - Add/edit-client form only asks for last name (required), first name
@@ -398,8 +434,26 @@ SQLite schema (v3):
   (building a debt/balance owed) - both are just reflected in the
   running balance, not tracked as a formal "package."
 - Track running balance per client (total charged vs. total paid).
-- Simple report/export: payments received in a date range (for
-  tax/bookkeeping purposes) - CSV export at minimum.
+- A client automatically marked "No-Show" (7.1) is billed for the
+  appointment's full scheduled length at the same $2.50/minute rate -
+  since no session ever started, there's no actual time to bill against,
+  so the scheduled slot length stands in for it. This charge counts
+  toward the client's balance exactly like a completed session's price
+  does. Manually marking a client "No-Show" from the appointment form
+  bills the same way. The Billing tab's client-balance list flags any
+  client with a no-show on record in a Notes column, so Admin can spot
+  it at a glance.
+- Payment report: a "View Report" button (in Billing, alongside a date
+  range) opens a popup showing one combined ledger for that range -
+  every payment received (as a positive amount) and every unpaid charge
+  still outstanding as of that range (completed or no-show sessions not
+  yet fully paid off, shown as a negative, bold, red amount labeled
+  "Unpaid" or "No Show"), sorted by date, with a footer totalling
+  Collected / Owed (unpaid) / Net - so Admin can see money in and money
+  still owed without needing a spreadsheet or PDF viewer (the front-desk
+  computer this runs on has neither). A separate "Export CSV..." button
+  next to it still exports payments received in a date range to a CSV
+  file, for tax/bookkeeping purposes.
 - Click Start Session / End Session on a client's row - times that
   client's session, calculates time x rate, displays amount owed at the
   end of the session based on actual time worked, not based on time
@@ -459,19 +513,40 @@ SQLite schema (v3):
   see 7.3) requires that same extra password confirmation, since it
   starts/stops the billing clock and locks in the charged price -
   mistakes there are harder to walk back than a booking mistake.
+- Backup & Restore (in the Admin tab, see 7.5) requires the Admin
+  password a second time right before restoring, on top of the password
+  already used to reach the Admin tab - restoring overwrites the live
+  database outright, so it gets the same extra confirmation as starting/
+  ending a session rather than trusting the tab-level gate alone.
 - Store only a hash of the password locally (e.g. via bcrypt or a
   similar library) - never store or log the plaintext password.
 
 7.5 Data Storage
 - All data lives in a single local SQLite file on the practitioner's
   computer. There is no cloud backup, no cloud sync, and no automatic
-  export - this was explicitly descoped for v1.
-- Because there's no backup, it's worth calling out as a risk: if the
-  computer's disk fails or the file is deleted, the data is gone. If
-  that risk becomes a concern later, manual backup (e.g. periodically
-  copying the database file to a USB drive) is a lightweight option
-  that doesn't require any of the cloud infrastructure this version
-  intentionally skips.
+  export - backup is a manual, on-demand, local-file action Admin
+  triggers herself (below), not something the app does on its own.
+- Backup & Restore (Admin tab): "Backup Database..." lets Admin save a
+  full copy of the live database to a file of her choosing (a file-save
+  dialog, defaulting to a name like "scheduler_backup_2026-09-16_1430.db")
+  - this can be done safely at any time, even while the app keeps running
+  normally. "Restore Database..." lets her pick a previously-saved backup
+  file and replace the live database with it; the app checks the chosen
+  file is actually a scheduler database (and not some unrelated or
+  corrupted file) before touching anything live, warns her exactly what
+  restoring will do, and requires the Admin password again as a final
+  confirmation (see 7.4) since this can't be undone once done. After a
+  successful restore the app closes itself so it reopens clean against
+  the restored data - Admin relaunches it manually afterward.
+- A backup file is a full copy of the database, so it carries the same
+  sensitive client contact/payment data as the live file (see 9) - it
+  should be kept somewhere private (e.g. Admin's own USB drive), not left
+  somewhere shared, for the same reason the live database itself is kept
+  local-only.
+- If the computer's disk fails or the file is deleted and no manual
+  backup was ever taken, the data is still gone - the risk noted in past
+  drafts of this doc isn't fully eliminated by Backup & Restore existing,
+  since it only helps if Admin actually remembers to run it periodically.
 
 ================================================================
 
@@ -482,11 +557,13 @@ re-entering the Admin password to switch into (see 7.4).
 
 Screens:
 1. Appointments (Calendar/Dashboard) - Day / Week / Month toggle (week
-   view by default on launch - see 7.1), a "Today / Go to Date" toggle
-   and a "Search Appointment" button for jumping to a date or a specific
-   client's booking, a "Schedule Appointment" button, quick view of the
-   current schedule, and the ability to block off a specific slot
-   directly on the calendar via right-click. Past dates are grayed out
+   view by default on launch - see 7.1), a "Today / Go to Date" toggle,
+   a "Search Appointment" button for jumping to a date or a specific
+   client's booking, a "Search Available Time Slot" button for finding an
+   open slot by session length (see 7.1), a "Schedule Appointment"
+   button, quick view of the current schedule, and the ability to block
+   off a specific slot directly on the calendar via right-click. Past
+   dates are grayed out
    and not clickable for new bookings, but existing appointments on them
    stay clickable so Admin can view who was booked; on today, each
    business-hours block - and the already-elapsed portion within a block
@@ -503,29 +580,37 @@ Screens:
 3. Appointment form (modal or side panel) - create/edit an appointment
    with one or more clients attached (shows each client's
    auto-calculated price once their session completes, color-coded and
-   labeled by status). Clicking the date field pops up a calendar
-   picker (past dates grayed out); clicking the start-time field opens a
-   dropdown of every permissible 5-minute-interval time - there's no
-   typed entry for either; duration is picked from a pre-validated list
-   of options (see 7.1). Starting or ending a client's session prompts
-   for the Admin password (see 7.3/7.4). A successful create/reschedule
-   shows a confirmation "ticket" recapping the client(s), date, time,
-   and notes.
+   labeled by status). Fields are filled in duration first, then date,
+   then start time (see 7.1): duration is picked from a generic,
+   pre-validated list; clicking the date field pops up a calendar picker
+   (past dates, and dates too short for the chosen duration, grayed out);
+   clicking the start-time field opens a dropdown of every permissible
+   15-minute-interval time on that date for that duration (plus exact
+   back-to-back/block-boundary times even off the 15-minute grid) -
+   there's no typed entry for date or start time. Starting or ending a
+   client's session prompts for the Admin password (see 7.3/7.4). A
+   successful create/reschedule hides the form and shows a confirmation
+   "ticket" recapping the client(s), date, time, and notes, plus a
+   contact/cancellation-policy reminder (see 7.1).
 4. Admin - a segmented sub-tab strip (Edit Business Hours / Block Time
-   Off / Billing) that opens on Edit Business Hours by default;
-   switching between the three swaps the content in place rather than
-   opening separate dialogs or pages. Edit Business Hours picks a date
-   and edits that date's hours only, with a "Reset to Default Hours"
+   Off / Billing / Backup & Restore) that opens on Edit Business Hours by
+   default; switching between the four swaps the content in place rather
+   than opening separate dialogs or pages. Edit Business Hours picks a
+   date and edits that date's hours only, with a "Reset to Default Hours"
    option to drop back to its normal weekly schedule (see 7.4); Save/
    Cancel on both Edit Business Hours and Block Time Off start disabled
    and only become active once a field has actually been changed, so
-   there's nothing to accidentally save or discard before then. Billing
-   and Client Detail (opened from a Billing balance row) present their
+   there's nothing to accidentally save or discard before then. Both
+   forms lay their fields out in a fixed-width column matching Billing's
+   card look, rather than stretching across the full tab. Billing and
+   Client Detail (opened from a Billing balance row) present their
    content in rounded card panels rather than plain native-OS group
    boxes, with balances/credits color-coded (red = owed, green = credit)
    consistently in both places. Billing records payments, shows client
-   balances, and exports reports (see 7.3). Reaching this tab at all
-   requires the Admin password (see 7.4).
+   balances (including any no-show charges), and offers a payment report
+   and a CSV export (see 7.3). Backup & Restore lets Admin save a copy of
+   the database to a file of her choosing, or restore one back (see 7.4/
+   7.5). Reaching this tab at all requires the Admin password (see 7.4).
 
 General UX notes:
 - Should feel like a lightweight, single-purpose business tool - fast
@@ -533,21 +618,31 @@ General UX notes:
   common action (booking a new appointment for an existing client).
 - The Admin password is prompted once at launch to open the app at all
   (see 7.4). A second password prompt appears when switching into the
-  Admin tab (which holds Edit Business Hours, Block Time Off, and
-  Billing), when right-clicking to block off a specific calendar slot
-  directly, or when starting/ending a client's session (7.3) - routine
-  booking, rescheduling, cancelling, client entry, and payment recording
-  don't require re-entering it.
+  Admin tab (which holds Edit Business Hours, Block Time Off, Billing,
+  and Backup & Restore), when right-clicking to block off a specific
+  calendar slot directly, when starting/ending a client's session (7.3),
+  or when restoring a database backup (7.4/7.5, checked again even though
+  Admin already cleared the tab's own gate, since restoring is a
+  point-of-no-return action) - routine booking, rescheduling, cancelling,
+  client entry, and payment recording don't require re-entering it.
 - The main window and the scheduling-confirmation ticket popup use a
   custom-drawn title bar (drag to move, minimize/maximize/close, still
   resizable from the window's edges) instead of the operating system's
   native one, so their appearance doesn't depend on the OS's window
-  theme or accent color. The app launches as a normal, centered window
-  sized around its content rather than maximized - the Day/Week
-  calendar grid scales its own layout to fit whatever height it's
-  actually given (see Screen 1 above), so there's no longer a reason to
-  force the window to cover the whole screen on launch, and the window
-  remains freely resizable afterward.
+  theme or accent color. The bar is styled light/white (in the manner of
+  Claude Desktop's own title bar) with a small calendar-emoji app icon
+  and thin, hand-drawn minimize/maximize/close outlines rather than
+  bold OS-style glyphs; the maximize glyph swaps to a "restore" icon
+  whenever the window is actually maximized, including via Windows'
+  own snap/double-click gestures, not just its own button. The ticket
+  popup's bar shows no title text, just the draggable strip and close
+  button. On Windows 11, the window's corners are asked to render
+  rounded to match the OS's own window style. The app launches as a
+  normal, centered window sized around its content rather than
+  maximized - the Day/Week calendar grid scales its own layout to fit
+  whatever height it's actually given (see Screen 1 above), so there's
+  no longer a reason to force the window to cover the whole screen on
+  launch, and the window remains freely resizable afterward.
 - Clear visual distinction between appointment statuses (scheduled /
   in process / completed / cancelled / no-show) via color coding, both
   on the calendar and on each client's row within the appointment form.
@@ -617,7 +712,8 @@ Phase 3 - Polish & Optional Enhancements
   edits)
 - Refined status color coding and calendar visuals
 - Manual local backup helper (e.g. a "copy database file to..." button),
-  if the no-backup risk noted in 7.5 becomes a concern later
+  if the no-backup risk noted in 7.5 becomes a concern later (built in
+  Phase 8 below as Backup & Restore)
 
 Phase 4 - Multi-Client Appointments & Scheduling UX
 - Simplified client form: last name only required, phone auto-formatted,
@@ -710,8 +806,7 @@ Phase 6 - Day View, Admin Hub & Window Chrome
   Record Payment's client field) could flash open and immediately close
   again on click instead of staying open to choose from
 
-Phase 7 - Per-Date Hours, Search, Auto-Fit Calendar & UI Polish (this
-revision)
+Phase 7 - Per-Date Hours, Search, Auto-Fit Calendar & UI Polish
 - Edit Business Hours reworked to override one specific date at a time
   (business_hours_overrides, see 6) instead of only ever editing a whole
   recurring weekday - picking a date shows its currently-effective hours
@@ -777,6 +872,81 @@ revision)
   highlight on that cell while the switch to Day view completes a
   moment later, so the jump from a whole month to a single day feels
   less abrupt without the click ever reading as unresponsive.
+
+Phase 8 - Backup/Restore, Payment Reporting, Duration-First Booking &
+Window Chrome Redesign (this revision)
+- New Backup & Restore page in the Admin tab: "Backup Database..." saves
+  a full copy of the live database to a file Admin picks, safely,
+  without needing to close the app; "Restore Database..." picks a backup
+  file, validates it's actually a scheduler database, warns what's about
+  to happen, re-confirms the Admin password, replaces the live database
+  with it, and closes the app so Admin can relaunch it clean. This
+  fulfills - and supersedes as a future "nice to have" - the manual
+  backup helper floated back in Phase 3.
+- New Payment Report: a "View Report" button in Billing opens a
+  consolidated ledger for a date range - payments received alongside any
+  still-unpaid completed/no-show charges for that range (shown negative,
+  in red, labeled "Unpaid"/"No Show") - with a Collected/Owed/Net summary
+  line, so Admin can see money in and still-owed money at a glance
+  without a spreadsheet. CSV export remains available alongside it.
+- No-shows are now billed: a client marked "No-Show" (whether by the
+  automatic sweep or manually) is charged for the appointment's full
+  scheduled length at the normal $2.50/minute rate, same as a completed
+  session, and that charge counts toward their balance. The Billing
+  tab's balance list now flags any client with a no-show on record.
+  Previously a no-show carried no charge at all.
+- Appointment-form fields are reordered to duration-first: Admin now
+  picks a session length before a date or start time, from a generic
+  duration list capped by the longest business-hours block in the
+  default weekly schedule rather than by a specific day/start already
+  chosen. The date picker's grayed-out days now also depend on whether
+  the chosen duration fits anywhere that day. Supersedes Phase 5's
+  duration-follows-start-time flow.
+- The start-time dropdown's granularity is now 15 minutes (was 5) - exact
+  boundary times (right against another appointment's end, or a
+  business-hours block's close) are still always offered as extra
+  options even off that grid, so back-to-back booking is never excluded.
+  Supersedes the 5-minute-interval behavior described in Phases 5 and 7.
+- New "Search Available Time Slot" button/dialog: pick a session length,
+  see a month-style grid of the next 14+ days color-coded Open (green) /
+  Full (gray) for that length, with a "Show More" button to widen the
+  range; clicking an open day jumps the calendar to Day view there. This
+  is a separate tool from "Search Appointment," which finds an existing
+  booking rather than an open slot.
+- Week view's appointment chips now scale to actual duration exactly like
+  Day view's always have, and both now always show the full start-end
+  time range on the chip - supersedes Phase 7's distinction where Week
+  view's narrower columns showed only a start time. Back-to-back
+  appointments (0-minute gap) now render with no visual gap between their
+  chips, and the flex-height math correctly accounts for the trailing
+  gap between the last appointment and a block's own close time.
+- Existing-appointment editor bugfix: opening an already-booked
+  appointment for edit was incorrectly defaulting its Start Time field
+  back to the earliest available slot instead of showing its own actual
+  saved time; fixed.
+- The scheduling-confirmation ticket now also reminds the client how
+  they'll be reached (whichever phone number(s) are on file for the
+  attached client(s)) and states a 24-hours-in-advance rescheduling/
+  cancellation policy, below the existing client/date/time/notes recap.
+  The appointment form now hides itself while the ticket is shown, rather
+  than staying visibly open underneath it.
+- Edit Business Hours and Block Time Off drop the oversized text/controls
+  introduced in Phase 7 for small-screen readability, reverting to the
+  app's normal text size inside a fixed-width column that matches
+  Billing's card layout - supersedes that Phase 7 change.
+- Window chrome redesigned to a lighter, "Claude Desktop"-style look: the
+  custom title bar (main window and the ticket popup) is now white/light
+  instead of dark, with a small calendar-emoji app icon and thin,
+  hand-drawn minimize/maximize/close outlines (the maximize glyph
+  correctly swaps to a restore icon when the window is maximized by any
+  means, including Windows' own snap gestures); the ticket popup's bar no
+  longer shows a title. On Windows 11 the window's corners are asked to
+  render rounded, matching the OS's own window style. Supersedes the dark
+  title bar introduced in Phase 6.
+- General visual-polish pass: buttons now read as raised/clickable via a
+  subtle drop shadow; borders on tabs, checkboxes, dropdowns, table
+  headers, menus, and splitters were sharpened and darkened for better
+  contrast against the lighter chrome above.
 
 ================================================================
 

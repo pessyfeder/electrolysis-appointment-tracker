@@ -1,14 +1,17 @@
 from datetime import date, datetime, time, timedelta
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTimeEdit, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QWidget, QMessageBox
 )
 from PySide6.QtCore import QDate, QTime, Signal
 
 from app import models, scheduling
 from app.util import format_12h, format_client_name
-from ui.widgets import ClickToOpenDateEdit, required_label, ADMIN_FORM_COLUMN_WIDTH as FORM_COLUMN_WIDTH
+from ui.widgets import (
+    ClickToOpenDateEdit, ClickToOpenTimeEdit, required_label,
+    ADMIN_FORM_COLUMN_WIDTH as FORM_COLUMN_WIDTH
+)
 
 
 class _BlockRow(QWidget):
@@ -18,11 +21,11 @@ class _BlockRow(QWidget):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.start_edit = QTimeEdit()
+        self.start_edit = ClickToOpenTimeEdit()
         self.start_edit.setDisplayFormat("h:mm AP")
         sh, sm = map(int, start_time.split(":"))
         self.start_edit.setTime(QTime(sh, sm))
-        self.end_edit = QTimeEdit()
+        self.end_edit = ClickToOpenTimeEdit()
         self.end_edit.setDisplayFormat("h:mm AP")
         eh, em = map(int, end_time.split(":"))
         self.end_edit.setTime(QTime(eh, em))

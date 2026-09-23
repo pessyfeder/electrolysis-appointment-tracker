@@ -11,6 +11,7 @@ from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QFontMetrics
 from app import models, scheduling
 from app.util import format_12h, format_client_name
 from ui.month_view import MonthGridWidget
+from ui.widgets import enable_touch_scroll
 
 DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
@@ -45,7 +46,8 @@ STATUS_LABELS = {
 PX_PER_MIN = 1.4
 SLOT_MIN = 15
 CARD_HEADER_HEIGHT = 26
-CARD_TOP_MARGIN = 10
+CARD_TOP_MARGIN = 4
+CARD_BOTTOM_MARGIN = 4
 CARD_GAP = 14
 CARD_RADIUS = 10
 
@@ -72,14 +74,36 @@ class ClickableLabel(QLabel):
 
 
 class DayHeaderWidget(QWidget):
+    # Emitted with the clicked column's date - used in Week view so Admin
+    # can jump straight to Edit Business Hours by clicking any day column
+    # (spec 7.4 admin re-auth applies before the jump, handled by the
+    # listener).
+    day_clicked = Signal(object)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.columns = [date.today()]
         self.setFixedHeight(40)
+        self.setCursor(Qt.PointingHandCursor)
 
     def set_columns(self, columns):
         self.columns = columns
         self.update()
+
+    def _column_at(self, x):
+        if not self.columns:
+            return None
+        col_width = self.width() / len(self.columns)
+        index = max(0, min(int(x / col_width), len(self.columns) - 1))
+        return self.columns[index]
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            pos = event.position() if hasattr(event, "position") else event.localPos()
+            d = self._column_at(pos.x())
+            if d is not None:
+                self.day_clicked.emit(d)
+        super().mousePressEvent(event)
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -99,11 +123,11 @@ class DayHeaderWidget(QWidget):
             x = i * col_width
             box = QRectF(x + gap / 2, 3, col_width - gap, self.height() - 6)
             if d == today:
-                bg, border = QColor("#dbeafe"), QColor("#93c5fd")
+                bg, border = QColor("#dbeafe"), QColor("#60a5fa")
             elif d < today:
-                bg, border = QColor("#e2e8f0"), QColor("#cbd5e1")
+                bg, border = QColor("#e2e8f0"), QColor("#94a3b8")
             else:
-                bg, border = QColor("#ffffff"), QColor("#cbd5e1")
+                bg, border = QColor("#ffffff"), QColor("#94a3b8")
             p.setBrush(QBrush(bg))
             p.setPen(QPen(border, 1))
             p.drawRoundedRect(box, 6, 6)
@@ -246,7 +270,7 @@ class TimeGridWidget(QWidget):
             key=lambda parts: parts[0] + parts[1] * PX_PER_MIN, default=(0, 0),
         )
         fixed_overhead = (
-            2 * CARD_TOP_MARGIN
+            CARD_TOP_MARGIN + CARD_BOTTOM_MARGIN
             + (am_fixed + CARD_GAP if am_minutes else 0)
             + (pm_fixed if pm_minutes else 0)
         )
@@ -262,7 +286,7 @@ class TimeGridWidget(QWidget):
 
         am_row_y = CARD_TOP_MARGIN
         pm_row_y = am_row_y + (am_height + CARD_GAP if am_height else 0)
-        max_height = max(am_row_y + am_height, pm_row_y + pm_height) + CARD_TOP_MARGIN
+        max_height = max(am_row_y + am_height, pm_row_y + pm_height) + CARD_BOTTOM_MARGIN
 
         self._columns_cards = []
         for i, d in enumerate(self.columns):
@@ -560,7 +584,7 @@ class TimeGridWidget(QWidget):
                                    card["header"].width(), card["header"].height() / 2))
 
                 # ...then the card border stroke on top, so it stays crisp over the header too.
-                p.setPen(QPen(QColor("#cbd5e1"), 1))
+                p.setPen(QPen(QColor("#94a3b8"), 1))
                 p.setBrush(Qt.NoBrush)
                 p.drawRoundedRect(card["full"], CARD_RADIUS, CARD_RADIUS)
 
@@ -607,7 +631,7 @@ class TimeGridWidget(QWidget):
         # slot, packed into a dense, messy-looking stripe).
         for rect, b in self._block_layout:
             p.setBrush(QBrush(QColor("#e2e8f0")))
-            p.setPen(QPen(QColor("#94a3b8"), 1))
+            p.setPen(QPen(QColor("#64748b"), 1))
             p.drawRoundedRect(rect, 4, 4)
             if rect.height() >= 18:
                 text = f"Blocked: {b['reason']}"
@@ -627,7 +651,7 @@ class TimeGridWidget(QWidget):
             else:
                 bg_hex, _, text_hex = STATUS_STYLES.get(a["status"], ("#f8fafc", "#e2e8f0", "#1e293b"))
                 fill, text_color = QColor(bg_hex), QColor(text_hex)
-            border = QColor("#b91c1c") if conflicted else fill.darker(115)
+            border = QColor("#b91c1c") if conflicted else fill.darker(140)
             p.setBrush(QBrush(fill))
             p.setPen(QPen(border, 3 if conflicted else 1))
             p.drawRoundedRect(rect, 6, 6)
@@ -704,22 +728,24 @@ class TimeGridWidget(QWidget):
 
 
 class CalendarView(QWidget):
-    def __init__(self, parent=None, require_admin=None, require_session_admin=None):
+    def __init__(self, parent=None, require_admin=None, require_session_admin=None,
+                 open_business_hours=None):
         super().__init__(parent)
         self.require_admin = require_admin or (lambda: True)
         self.require_session_admin = require_session_admin or self.require_admin
+        self.open_business_hours = open_business_hours or (lambda: None)
         self.mode = "week"
         self.anchor_date = date.today()
         self._next_available = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
-        outer.setSpacing(10)
+        outer.setSpacing(4)
 
         toolbar_card = QFrame()
         toolbar_card.setObjectName("toolbarCard")
         toolbar_card.setStyleSheet(
-            "#toolbarCard { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }"
+            "#toolbarCard { background: #ffffff; border: 1px solid #94a3b8; border-radius: 12px; }"
         )
         toolbar = QHBoxLayout(toolbar_card)
         toolbar.setContentsMargins(14, 11, 14, 11)
@@ -762,7 +788,7 @@ class CalendarView(QWidget):
         toolbar.addWidget(segmented)
 
         prev_btn = QPushButton("‹")
-        prev_btn.setFixedWidth(34)
+        prev_btn.setFixedSize(44, 44)
         prev_btn.setStyleSheet("font-size: 16px; font-weight: 600;")
         prev_btn.clicked.connect(self._go_prev)
         toolbar.addWidget(prev_btn)
@@ -798,7 +824,7 @@ class CalendarView(QWidget):
         toolbar.addWidget(today_segmented)
 
         next_btn = QPushButton("›")
-        next_btn.setFixedWidth(34)
+        next_btn.setFixedSize(44, 44)
         next_btn.setStyleSheet("font-size: 16px; font-weight: 600;")
         next_btn.clicked.connect(self._go_next)
         toolbar.addWidget(next_btn)
@@ -829,6 +855,12 @@ class CalendarView(QWidget):
         toolbar.addWidget(add_btn)
 
         outer.addWidget(toolbar_card)
+        # DayHeaderWidget (below) insets its rounded day boxes 3px from its
+        # own top edge (see paintEvent's `box = QRectF(..., 3, ...)`), which
+        # on top of outer's uniform 4px spacing made this pill look closer
+        # to the toolbar above it than to the grid below - this extra 3px
+        # balances the two gaps.
+        outer.addSpacing(3)
 
         self.next_available_label = ClickableLabel("")
         self.next_available_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -842,16 +874,17 @@ class CalendarView(QWidget):
 
         split_row = QHBoxLayout()
         split_row.setContentsMargins(0, 0, 0, 0)
-        split_row.setSpacing(10)
+        split_row.setSpacing(4)
 
         grid_container = QWidget()
         grid_col = QVBoxLayout(grid_container)
         grid_col.setContentsMargins(0, 0, 0, 0)
-        grid_col.setSpacing(10)
+        grid_col.setSpacing(4)
 
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 0)
         self.header = DayHeaderWidget()
+        self.header.day_clicked.connect(self._on_day_header_clicked)
         header_row.addWidget(self.header)
         grid_col.addLayout(header_row)
 
@@ -886,11 +919,11 @@ class CalendarView(QWidget):
         self.day_list_panel.setObjectName("dayListPanel")
         self.day_list_panel.setMinimumWidth(380)
         self.day_list_panel.setStyleSheet(
-            "#dayListPanel { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }"
+            "#dayListPanel { background: #ffffff; border: 1px solid #94a3b8; border-radius: 12px; }"
         )
         day_list_col = QVBoxLayout(self.day_list_panel)
         day_list_col.setContentsMargins(14, 12, 14, 12)
-        day_list_col.setSpacing(8)
+        day_list_col.setSpacing(4)
         self.day_list_title = QLabel("Today's Appointments")
         self.day_list_title.setStyleSheet("font-weight: 700; font-size: 12pt; color: #1e293b;")
         day_list_col.addWidget(self.day_list_title)
@@ -901,6 +934,7 @@ class CalendarView(QWidget):
             "QListWidget::item:selected { background: #eff6ff; }"
         )
         self.day_list.itemClicked.connect(self._on_day_list_item_clicked)
+        enable_touch_scroll(self.day_list)
         day_list_col.addWidget(self.day_list)
         split_row.addWidget(self.day_list_panel, 2)
         self.day_list_panel.hide()
@@ -931,7 +965,7 @@ class CalendarView(QWidget):
         month_card = QFrame()
         month_card.setObjectName("monthCard")
         month_card.setStyleSheet(
-            "#monthCard { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 14px; }"
+            "#monthCard { background: #ffffff; border: 1px solid #94a3b8; border-radius: 14px; }"
         )
         month_card.setMinimumWidth(920)
         month_card.setMaximumWidth(1220)
@@ -1047,6 +1081,13 @@ class CalendarView(QWidget):
         ws = week_start(self.anchor_date)
         return [ws + timedelta(days=i) for i in range(7)]
 
+    def _on_day_header_clicked(self, d):
+        # Any day column in Week view jumps to Edit Business Hours -
+        # elsewhere (Day/Month) this header click is a no-op.
+        if self.mode != "week":
+            return
+        self.open_business_hours()
+
     # ---- data refresh ----
     def refresh(self):
         self._sync_today_toggle()
@@ -1107,10 +1148,23 @@ class CalendarView(QWidget):
                 self.day_list.addItem(empty)
                 return
 
+            # All rows share one time-column width (the widest time range's
+            # own sizeHint) so every row's name label starts at the same x -
+            # otherwise "10:30 AM - 11:45 AM" and "1:15 PM - 1:30 PM" render
+            # at different widths and the names underneath drift out of line.
+            probe = QLabel()
+            probe.setStyleSheet("font-weight: 700;")
+            time_col_width = 0
+            for _, kind, obj in entries:
+                s = datetime.fromisoformat(obj["start_datetime"])
+                e = datetime.fromisoformat(obj["end_datetime"])
+                probe.setText(f"{format_12h(s)} – {format_12h(e)}")
+                time_col_width = max(time_col_width, probe.sizeHint().width())
+
             for _, kind, obj in entries:
                 item = QListWidgetItem()
                 item.setData(Qt.UserRole, (kind, obj))
-                row = self._build_day_row(kind, obj)
+                row = self._build_day_row(kind, obj, time_col_width)
                 # setFixedHeight(), not just setSizeHint(hint) on the item -
                 # a plain QWidget's default vertical size policy (Preferred)
                 # lets QListWidget's own item-widget embedding shrink it
@@ -1128,7 +1182,7 @@ class CalendarView(QWidget):
         finally:
             self._populating_day_list = False
 
-    def _build_day_row(self, kind, obj):
+    def _build_day_row(self, kind, obj, time_col_width=0):
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(6, 8, 6, 8)
@@ -1138,7 +1192,9 @@ class CalendarView(QWidget):
             b_start = datetime.fromisoformat(obj["start_datetime"])
             b_end = datetime.fromisoformat(obj["end_datetime"])
             time_label = QLabel(f"{format_12h(b_start)} – {format_12h(b_end)}")
-            time_label.setStyleSheet("font-weight: 700; color: #64748b; min-width: 130px;")
+            time_label.setStyleSheet("font-weight: 700; color: #64748b;")
+            if time_col_width:
+                time_label.setFixedWidth(time_col_width)
             reason_label = QLabel(f"Blocked: {obj['reason']}")
             reason_label.setStyleSheet("color: #64748b; font-style: italic;")
             layout.addWidget(time_label)
@@ -1150,6 +1206,8 @@ class CalendarView(QWidget):
         e = datetime.fromisoformat(a["end_datetime"])
         time_label = QLabel(f"{format_12h(s)} – {format_12h(e)}")
         time_label.setStyleSheet("font-weight: 700; color: #1e293b;")
+        if time_col_width:
+            time_label.setFixedWidth(time_col_width)
 
         bg, border, text_color = STATUS_STYLES.get(a["status"], ("#f8fafc", "#e2e8f0", "#1e293b"))
         pill = QLabel(STATUS_LABELS.get(a["status"], a["status"]))
@@ -1172,7 +1230,7 @@ class CalendarView(QWidget):
         margins = layout.contentsMargins()
         reserved = (
             margins.left() + margins.right()
-            + time_label.sizeHint().width() + layout.spacing()
+            + (time_col_width or time_label.sizeHint().width()) + layout.spacing()
             + pill.sizeHint().width() + layout.spacing()
         )
         avail_for_name = max(40, self.day_list.viewport().width() - reserved)

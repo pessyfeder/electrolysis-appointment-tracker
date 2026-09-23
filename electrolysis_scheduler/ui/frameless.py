@@ -6,12 +6,42 @@ QWindow.startSystemMove()/startSystemResize() so Aero Snap, proper resize
 cursors, and multi-monitor DPI keep working exactly as they do for a normal
 window - only the visible chrome is replaced."""
 
+import ctypes
+import sys
+
 from PySide6.QtCore import Qt, QEvent, QPointF, QRectF
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton
 
-RESIZE_MARGIN = 6
+# Wide enough to grab with a fingertip on a touchscreen, not just a mouse
+# cursor - a 6px band (the old value) is well under any touch-target
+# guideline and is effectively ungrabbable with a finger.
+RESIZE_MARGIN = 16
 _BAR_BG = "#ffffff"
+
+_DWMWA_WINDOW_CORNER_PREFERENCE = 33
+_DWMWCP_ROUND = 2
+
+
+def enable_rounded_corners(window):
+    """Ask DWM (Windows 11) to round this window's actual corners at the
+    compositor level. A frameless window (Qt.FramelessWindowHint) has no
+    native frame for Windows to round on its own the way it does for
+    ordinary windows, so every corner otherwise reads as a hard 90-degree
+    edge no matter what any child widget's QSS draws - this is what
+    softens them. No-op (silently) on anything older than Windows 11 or
+    off Windows entirely, since the DWM attribute doesn't exist there."""
+    if sys.platform != "win32":
+        return
+    try:
+        hwnd = int(window.winId())
+        preference = ctypes.c_int(_DWMWCP_ROUND)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd, _DWMWA_WINDOW_CORNER_PREFERENCE,
+            ctypes.byref(preference), ctypes.sizeof(preference),
+        )
+    except OSError:
+        pass
 
 _BTN_STYLE = (
     "QPushButton { background: transparent; border: none; border-radius: 4px; }"
@@ -112,7 +142,11 @@ class FramelessTitleBar(QWidget):
         super().__init__(parent)
         self._window = window
         self.setObjectName("framelessTitleBar")
-        self.setFixedHeight(height)
+        # The bar itself has to be at least as tall as the (touch-floored,
+        # 44px) caption buttons plus their vertical margin, or a small
+        # `height` (e.g. the 32px default for a close-only dialog bar)
+        # would clip them.
+        self.setFixedHeight(max(height, 50))
         # A plain QWidget (unlike QFrame) doesn't paint a stylesheet
         # background on its own - without this attribute the white bar
         # underneath the buttons never actually renders, leaving just the
@@ -149,26 +183,34 @@ class FramelessTitleBar(QWidget):
         # either side) so their hover/pressed rounded-rect highlight reads
         # as a soft pill instead of a hard-edged block spanning the full
         # bar height - the flat edge-to-edge rectangles were what made the
-        # old bar feel clunky.
-        btn_h = height - 6
+        # old bar feel clunky. Width/height are floored at 44px (the usual
+        # touch-target guideline) so these stay tappable with a finger on a
+        # tablet, not just precise with a mouse cursor.
+        btn_h = max(44, height - 6)
+        btn_w = max(44, btn_h)
 
         self._max_btn = None
         if show_minimize:
             min_btn = _CaptionButton("minimize", _BTN_STYLE)
-            min_btn.setFixedSize(36, btn_h)
+            min_btn.setFixedSize(btn_w, btn_h)
             min_btn.setCursor(Qt.ArrowCursor)
             min_btn.clicked.connect(window.showMinimized)
             layout.addWidget(min_btn, 0, Qt.AlignVCenter)
 
         if show_maximize:
             self._max_btn = _CaptionButton("maximize", _BTN_STYLE)
-            self._max_btn.setFixedSize(36, btn_h)
+            self._max_btn.setFixedSize(btn_w, btn_h)
             self._max_btn.setCursor(Qt.ArrowCursor)
             self._max_btn.clicked.connect(self._toggle_maximize)
             layout.addWidget(self._max_btn, 0, Qt.AlignVCenter)
 
+        # Extra breathing room before Close specifically - it sits right
+        # next to Maximize/Minimize, and a mis-tap there quits the app, so
+        # it gets a wider gap than the 2px spacing between the other two.
+        layout.addSpacing(10)
+
         close_btn = _CaptionButton("close", _CLOSE_BTN_STYLE)
-        close_btn.setFixedSize(36, btn_h)
+        close_btn.setFixedSize(btn_w, btn_h)
         close_btn.setCursor(Qt.ArrowCursor)
         close_btn.clicked.connect(window.close)
         layout.addWidget(close_btn, 0, Qt.AlignVCenter)

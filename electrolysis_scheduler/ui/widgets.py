@@ -1,8 +1,10 @@
 from PySide6.QtWidgets import (
-    QDateEdit, QAbstractSpinBox, QCalendarWidget, QDoubleSpinBox, QLabel,
-    QFrame, QVBoxLayout, QTableWidget, QHeaderView
+    QDateEdit, QTimeEdit, QAbstractSpinBox, QCalendarWidget, QDoubleSpinBox,
+    QLabel, QFrame, QVBoxLayout, QHBoxLayout, QTableWidget, QHeaderView,
+    QListWidget, QListWidgetItem, QPushButton, QWidget, QScroller,
+    QAbstractItemView
 )
-from PySide6.QtCore import Qt, QEvent, QPoint, QDate, QObject
+from PySide6.QtCore import Qt, QEvent, QPoint, QDate, QTime, QObject, Signal
 from PySide6.QtGui import QTextCharFormat, QColor
 
 _DISABLED_DATE_FORMAT = QTextCharFormat()
@@ -46,7 +48,7 @@ def make_card(title):
     card = QFrame()
     card.setObjectName("appCard")
     card.setStyleSheet(
-        "#appCard { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }"
+        "#appCard { background: #ffffff; border: 1px solid #94a3b8; border-radius: 12px; }"
     )
     layout = QVBoxLayout(card)
     layout.setContentsMargins(18, 16, 18, 18)
@@ -55,6 +57,22 @@ def make_card(title):
     title_label.setStyleSheet("font-weight: 700; font-size: 13pt; color: #1e293b;")
     layout.addWidget(title_label)
     return card, layout
+
+
+def enable_touch_scroll(area):
+    """Kinetic (flick) scrolling for a QAbstractScrollArea (QTableWidget,
+    QListWidget, QScrollArea, ...) - Qt widgets have no touch scrolling by
+    default, only a thin scrollbar meant for a precise mouse drag. Grabbing
+    LeftMouseButtonGesture (rather than TouchGesture) is what makes this
+    work with a fingertip too: Windows synthesizes left-button mouse events
+    from touch for apps, like this one, that don't handle raw touch events
+    directly, so a real touch drag arrives here as exactly the kind of
+    press-move-release QScroller is already watching for. A plain tap still
+    reads as a click/selection - QScroller only takes over once the
+    movement crosses its own drag threshold."""
+    if hasattr(area, "setVerticalScrollMode"):
+        area.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+    QScroller.grabGesture(area.viewport(), QScroller.LeftMouseButtonGesture)
 
 
 def style_history_table(table, stretch_column):
@@ -76,6 +94,7 @@ def style_history_table(table, stretch_column):
         header.setSectionResizeMode(
             QHeaderView.Stretch if col == stretch_column else QHeaderView.ResizeToContents
         )
+    enable_touch_scroll(table)
 
 
 class _ShowPopupOnClick(QObject):
@@ -252,3 +271,134 @@ class ClickToOpenDateEdit(QDateEdit):
             return
         self.setDate(picked_date)
         cal.close()
+
+
+_TIME_PICKER_MINUTE_STEP = 5
+
+
+class _TimePickerPopup(QWidget):
+    """Hour/minute/AM-PM lists sized for a fingertip, shown by
+    ClickToOpenTimeEdit in place of QTimeEdit's own tiny spin arrows."""
+
+    time_picked = Signal(QTime)
+
+    def __init__(self, current, parent=None):
+        super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setStyleSheet(
+            "background: #ffffff; border: 1px solid #94a3b8; border-radius: 10px;"
+        )
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
+
+        lists_row = QHBoxLayout()
+        lists_row.setSpacing(6)
+
+        hour12 = current.hour() % 12
+        hour12 = 12 if hour12 == 0 else hour12
+        minute_values = list(range(0, 60, _TIME_PICKER_MINUTE_STEP))
+        nearest_minute_idx = min(
+            range(len(minute_values)), key=lambda i: abs(minute_values[i] - current.minute())
+        )
+
+        self.hour_list = self._make_list([str(h) for h in range(1, 13)], hour12 - 1)
+        self.minute_list = self._make_list([f"{m:02d}" for m in minute_values], nearest_minute_idx)
+        self.ampm_list = self._make_list(["AM", "PM"], 1 if current.hour() >= 12 else 0)
+
+        lists_row.addWidget(self.hour_list)
+        lists_row.addWidget(self.minute_list)
+        lists_row.addWidget(self.ampm_list)
+        outer.addLayout(lists_row)
+
+        done_btn = QPushButton("Done")
+        done_btn.setObjectName("primaryButton")
+        done_btn.setMinimumHeight(44)
+        done_btn.clicked.connect(self._confirm)
+        outer.addWidget(done_btn)
+
+        self.resize(240, 260)
+
+    @staticmethod
+    def _make_list(items, current_row):
+        lw = QListWidget()
+        lw.setStyleSheet(
+            "QListWidget { border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; } "
+            "QListWidget::item { padding: 12px 4px; } "
+            "QListWidget::item:selected { background: #eff6ff; color: #1d4ed8; font-weight: 700; }"
+        )
+        for text in items:
+            item = QListWidgetItem(text)
+            item.setTextAlignment(Qt.AlignCenter)
+            lw.addItem(item)
+        lw.setCurrentRow(max(0, current_row))
+        enable_touch_scroll(lw)
+        return lw
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        for lw in (self.hour_list, self.minute_list, self.ampm_list):
+            lw.scrollToItem(lw.currentItem(), QListWidget.PositionAtCenter)
+
+    def _confirm(self):
+        hour = int(self.hour_list.currentItem().text()) % 12
+        if self.ampm_list.currentRow() == 1:
+            hour += 12
+        minute = int(self.minute_list.currentItem().text())
+        self.time_picked.emit(QTime(hour, minute))
+        self.close()
+
+
+class ClickToOpenTimeEdit(QTimeEdit):
+    """A time field that can only be set via a tap-friendly popup - never by
+    typing or nudging QTimeEdit's own spin arrows, which are far too small
+    to hit reliably with a finger. Mirrors ClickToOpenDateEdit's approach:
+    the internal line edit is made read-only/unfocusable and a click
+    anywhere on the field opens a popup instead."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        self._popup = None
+
+        edit = self.lineEdit()
+        edit.installEventFilter(self)
+        edit.setReadOnly(True)
+        edit.setFocusPolicy(Qt.NoFocus)
+        self.setFocusPolicy(Qt.StrongFocus)
+        edit.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def eventFilter(self, obj, event):
+        if obj is self.lineEdit():
+            et = event.type()
+            if et in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
+                if self.isEnabled():
+                    self._show_popup()
+                return True
+            if et == QEvent.Wheel:
+                return True
+            if et == QEvent.KeyPress and event.key() not in (Qt.Key_Tab, Qt.Key_Backtab):
+                return True
+        return super().eventFilter(obj, event)
+
+    def mousePressEvent(self, event):
+        if self.isEnabled():
+            self._show_popup()
+        event.accept()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Tab, Qt.Key_Backtab):
+            super().keyPressEvent(event)
+        else:
+            event.ignore()
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+    def _show_popup(self):
+        popup = _TimePickerPopup(self.time(), self)
+        popup.time_picked.connect(self.setTime)
+        popup.move(self.mapToGlobal(QPoint(0, self.height())))
+        popup.show()
+        self._popup = popup

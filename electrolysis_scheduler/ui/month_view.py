@@ -152,7 +152,7 @@ class MonthGridWidget(QWidget):
             # Brushes set by earlier iterations (today's badge circle, chip
             # fills) must not leak into this plain stroked border.
             p.setBrush(Qt.NoBrush)
-            p.setPen(QPen(QColor("#f1f5f9")))
+            p.setPen(QPen(QColor("#e2e8f0")))
             p.drawRect(rect)
 
             # Day-number badge (filled circle for today)

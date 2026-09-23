@@ -47,7 +47,7 @@ QTabBar::tab {
 QTabBar::tab:selected {
     background: #ffffff;
     color: #2563eb;
-    border-color: #cbd5e1;
+    border-color: #94a3b8;
     border-bottom: 2px solid #2563eb;
 }
 QTabBar::tab:hover:!selected {
@@ -58,7 +58,7 @@ QTabBar::tab:hover:!selected {
 /* ---- Buttons ---- */
 QPushButton {
     background: #ffffff;
-    border: 1px solid #cbd5e1;
+    border: 1px solid #94a3b8;
     border-radius: 6px;
     padding: 6px 14px;
     color: #334155;
@@ -101,7 +101,7 @@ QSpinBox:focus, QDateEdit:focus, QComboBox:focus {
     border: 1px solid #2563eb;
 }
 QComboBox::drop-down {
-    border-left: 1px solid #94a3b8;
+    border-left: none;
     width: 22px;
 }
 QComboBox QAbstractItemView {
@@ -188,7 +188,7 @@ QGroupBox::title {
 /* ---- Menus ---- */
 QMenuBar {
     background: #ffffff;
-    border-bottom: 1px solid #cbd5e1;
+    border-bottom: 1px solid #94a3b8;
 }
 QMenuBar::item {
     padding: 4px 10px;

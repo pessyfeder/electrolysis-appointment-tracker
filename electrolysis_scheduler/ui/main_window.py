@@ -5,7 +5,7 @@ from ui.calendar_view import CalendarView
 from ui.billing_view import BillingView
 from ui.admin_view import AdminView
 from ui.login_dialog import prompt_admin_reauth
-from ui.frameless import FramelessTitleBar, ResizeGrips, make_app_icon
+from ui.frameless import FramelessTitleBar, ResizeGrips, make_app_icon, enable_rounded_corners
 
 
 class MainWindow(QMainWindow):
@@ -29,6 +29,7 @@ class MainWindow(QMainWindow):
         # white draggable strip (no title text/icon) instead of whatever
         # accent color the OS happens to theme native title bars with.
         self.setWindowFlag(Qt.FramelessWindowHint)
+        enable_rounded_corners(self)
 
         central = QWidget()
         central.setObjectName("appFrame")
@@ -47,6 +48,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.calendar_view = CalendarView(
             self, require_admin=self.require_admin, require_session_admin=self.require_session_admin,
+            open_business_hours=self.open_business_hours_admin,
         )
         self.billing_view = BillingView(self, require_admin=self.require_admin)
         self.admin_view = AdminView(
@@ -117,6 +119,18 @@ class MainWindow(QMainWindow):
     # billing - have a gate that reads its own intent, even though today it
     # happens to check the exact same thing as every other admin action.
     require_session_admin = require_admin
+
+    def open_business_hours_admin(self):
+        # Day-header clicks in Week view (see CalendarView.
+        # _on_day_header_clicked) jump straight to the Admin tab's Edit
+        # Business Hours page - same password gate as a plain Admin-tab
+        # click but with wording that explains why it's asking, then reuse
+        # that click's authenticated-switch path so _on_tab_changed doesn't
+        # prompt a second time.
+        if not prompt_admin_reauth(self, "Enter Admin password to edit business hours."):
+            return
+        self._admin_authenticated_click = True
+        self.tabs.setCurrentWidget(self.admin_view)
 
     def eventFilter(self, obj, event):
         if obj is self.tabs.tabBar() and event.type() == QEvent.MouseButtonPress:
