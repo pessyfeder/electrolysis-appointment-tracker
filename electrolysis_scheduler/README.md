@@ -132,6 +132,21 @@ instead. It closes any running instance, rebuilds via PyInstaller, and
 writes `release\ElectrolysisScheduler.zip` containing the whole
 `ElectrolysisScheduler` folder.
 
+### Installing on the target machine
+
+**Preferred: USB drive.** Copy the whole `dist\ElectrolysisScheduler` folder
+(the `.exe` and its `_internal` folder together) onto a USB drive, then copy
+it from the drive to somewhere local on the target machine, like
+`C:\ElectrolysisScheduler` — don't run it directly off the USB drive. No
+internet access or upload is needed on either end.
+
+**Fallback: zip download.** If no USB drive is available, use
+`build_release.bat` to produce `release\ElectrolysisScheduler.zip`, upload
+that zip somewhere the target machine can reach (cloud drive, email, etc.),
+download it there, and extract the whole zip before running the `.exe` —
+extracting keeps `_internal` together with it, which the app needs to
+launch at all.
+
 ## Where the data lives / backups
 
 All data is in a single SQLite file:

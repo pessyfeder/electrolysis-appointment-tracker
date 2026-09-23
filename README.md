@@ -53,6 +53,12 @@ python -m PyInstaller --noconfirm ElectrolysisScheduler.spec
 
 The finished app lands in `dist\ElectrolysisScheduler\ElectrolysisScheduler.exe`. Copy the whole `ElectrolysisScheduler` folder to the target machine — it needs no separate Python install to run.
 
+### Installing on the target machine
+
+**Preferred: USB drive.** Copy the whole `ElectrolysisScheduler` folder (the `.exe` plus its `_internal` folder) onto a USB drive, plug it into the target machine, and copy the folder from the drive to somewhere local like `C:\ElectrolysisScheduler` — don't run it directly off the USB drive. This avoids uploading the app anywhere and works even without internet access on either machine.
+
+**Fallback: zip download.** If a USB drive isn't available, run `build_release.bat` to produce `release\ElectrolysisScheduler.zip`, upload that zip somewhere the target machine can reach (e.g. a cloud drive or email), download it there, and extract the whole zip before running the `.exe` — extracting keeps the `_internal` folder together with it, which is required for the app to launch.
+
 ## Where the data lives
 
 All data is stored in a single SQLite file:
